@@ -1,144 +1,63 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Viewer — SecureCam (minimal WS)</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SecureCam Viewer</title>
   <style>
-    body { font-family: system-ui, -apple-system, sans-serif; margin: 18px; }
-    video { width: 640px; height: 360px; background:#000; }
-    .status { margin-top: 10px; }
+    body { font-family: sans-serif; text-align: center; background: #111; color: #eee; }
+    video { width: 80%; margin-top: 1rem; border: 2px solid #555; border-radius: 10px; }
   </style>
 </head>
 <body>
-  <h1>Viewer</h1>
+  <h1>👁️ SecureCam Viewer</h1>
   <video id="remoteVideo" autoplay playsinline></video>
-  <div class="status">
-    <div id="info">Connecting…</div>
-    <button id="leaveBtn" disabled>Leave</button>
-  </div>
+  <p id="status"></p>
 
-<script>
-(async function(){
-  const urlParams = new URLSearchParams(location.search);
-  const streamId = urlParams.get('stream');
-  const info = document.getElementById('info');
-  const remoteVideo = document.getElementById('remoteVideo');
-  const leaveBtn = document.getElementById('leaveBtn');
+  <script>
+    const WS_URL = window.location.origin.replace(/^http/, 'ws');
+    const socket = new WebSocket(WS_URL);
+    const remoteVideo = document.getElementById('remoteVideo');
+    const status = document.getElementById('status');
+    let pc;
 
-  if (!streamId) {
-    info.textContent = 'No stream specified. Add ?stream=<id> to the URL.';
-    return;
-  }
+    socket.onopen = () => {
+      console.log('Connected to signaling server');
+      socket.send(JSON.stringify({ type: 'viewer-join' }));
+    };
 
-  let ws = null;
-  let pc = null;
-  let viewerId = null;
-  const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+    socket.onmessage = async (event) => {
+      const msg = JSON.parse(event.data);
 
-  function sendWs(msg) {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
-  }
+      if (msg.type === 'streamer-offer') {
+        console.log('Received offer from streamer');
+        pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
 
-  ws = new WebSocket(`${location.origin.replace(/^http/, 'ws')}`);
-  ws.onopen = () => {
-    sendWs({ type: 'identify', role: 'viewer', streamId });
-  };
+        pc.ontrack = (e) => {
+          console.log('Got remote stream');
+          remoteVideo.srcObject = e.streams[0];
+        };
 
-  ws.onmessage = async (ev) => {
-    let msg;
-    try { msg = JSON.parse(ev.data); } catch(e) { return; }
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            socket.send(JSON.stringify({ type: 'viewer-candidate', candidate: event.candidate }));
+          }
+        };
 
-    if (msg.type === 'identified' && msg.role === 'viewer') {
-      viewerId = msg.viewerId;
-      info.textContent = `Connected to signaling; viewerId=${viewerId}. Waiting for offer...`;
-      leaveBtn.disabled = false;
-      return;
-    }
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
 
-    if (msg.type === 'offer') {
-      // Received an offer from streamer via server
-      const sdp = msg.sdp;
-      info.textContent = 'Offer received — creating PeerConnection...';
-      await handleOffer(sdp, msg.from);
-      return;
-    }
-
-    if (msg.type === 'candidate') {
-      // remote candidate from streamer
-      const candidate = msg.candidate;
-      if (pc) {
-        try { await pc.addIceCandidate(candidate); } catch(e) { console.warn('addIceCandidate error', e); }
+        socket.send(JSON.stringify({ type: 'viewer-answer', answer }));
+        status.textContent = 'Connected to stream!';
+      } else if (msg.type === 'streamer-candidate') {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+        } catch (e) {
+          console.warn('Add ICE candidate error:', e);
+        }
       }
-      return;
-    }
-
-    if (msg.type === 'no-stream') {
-      info.textContent = 'Streamer not available';
-      return;
-    }
-
-    if (msg.type === 'stream-ended') {
-      info.textContent = 'Stream ended';
-      cleanup();
-      return;
-    }
-
-  };
-
-  async function handleOffer(sdp, fromStreamer) {
-    pc = new RTCPeerConnection(configuration);
-
-    pc.ontrack = (ev) => {
-      // set remote stream
-      remoteVideo.srcObject = ev.streams[0];
     };
-
-    pc.onicecandidate = (ev) => {
-      if (!ev.candidate) return;
-      sendWs({
-        type: 'candidate',
-        from: viewerId,
-        to: fromStreamer, // streamer streamId
-        toStreamer: true,
-        candidate: ev.candidate
-      });
-    };
-
-    try {
-      await pc.setRemoteDescription({ type: 'offer', sdp });
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-
-      // send answer to streamer via server
-      sendWs({
-        type: 'answer',
-        from: viewerId,
-        to: fromStreamer, // streamer streamId
-        toStreamer: true,
-        sdp: answer.sdp
-      });
-
-      info.textContent = 'Answer sent, waiting for media...';
-    } catch (err) {
-      console.error('handleOffer error', err);
-      info.textContent = 'Error handling offer: ' + err.message;
-    }
-  }
-
-  leaveBtn.onclick = () => {
-    // notify server we left
-    sendWs({ type: 'leave', from: viewerId, to: streamId, toStreamer: true, viewerId });
-    cleanup();
-  };
-
-  function cleanup() {
-    try { if (pc) pc.close(); } catch(_) {}
-    pc = null;
-    try { if (ws) ws.close(); } catch(_) {}
-    info.textContent = 'Left';
-    leaveBtn.disabled = true;
-  }
-})();
-</script>
+  </script>
 </body>
 </html>
