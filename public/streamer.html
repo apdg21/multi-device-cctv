@@ -198,19 +198,103 @@
       border-radius: 15px;
       font-size: 0.8rem;
     }
+  .audio-controls {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 15px;
+      padding: 1.5rem;
+      margin: 1rem 0;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .audio-toggle {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 60px;
+      height: 34px;
+    }
+    
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 34px;
+    }
+    
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 26px;
+      width: 26px;
+      left: 4px;
+      bottom: 4px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .slider {
+      background-color: #00ff88;
+    }
+    
+    input:checked + .slider:before {
+      transform: translateX(26px);
+    }
+    
+    .audio-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+    
+    .audio-level {
+      width: 100px;
+      height: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    
+    .audio-level-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #00ff88, #0088ff);
+      width: 0%;
+      transition: width 0.1s;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <h1>🎥 SecureCam Streamer</h1>
-      <p class="subtitle">Secure, real-time video streaming</p>
+      <p class="subtitle">Secure, real-time video streaming with audio</p>
     </header>
     
     <div class="status-card">
       <div class="status-indicator">
         <div class="indicator-dot" id="statusDot"></div>
-        <span id="statusText">Initializing camera...</span>
+        <span id="statusText">Initializing camera and microphone...</span>
       </div>
       
       <div id="streamInfo" style="display: none;">
@@ -221,6 +305,25 @@
         
         <div class="viewers-count">
           👁️ <span id="viewersCount">0</span> viewers connected
+        </div>
+      </div>
+    </div>
+
+    <!-- Audio Controls -->
+    <div class="audio-controls">
+      <div class="audio-toggle">
+        <span>Microphone:</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="audioToggle" checked>
+          <span class="slider"></span>
+        </label>
+        <span id="audioStatus">Enabled</span>
+        
+        <div class="audio-indicator">
+          <span>Volume:</span>
+          <div class="audio-level">
+            <div class="audio-level-bar" id="audioLevel"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -251,11 +354,18 @@
     const newStreamBtn = document.getElementById("newStreamBtn");
     const viewersCount = document.getElementById("viewersCount");
     const viewersContainer = document.getElementById("viewersContainer");
+    const audioToggle = document.getElementById("audioToggle");
+    const audioStatus = document.getElementById("audioStatus");
+    const audioLevel = document.getElementById("audioLevel");
 
     let socket;
     let pc;
     let currentStream;
     let connectedViewers = new Set();
+    let audioContext;
+    let analyser;
+    let microphone;
+    let javascriptNode;
 
     // Update status display
     function updateStatus(message, isConnected = false) {
@@ -276,25 +386,92 @@
       });
     }
 
-    // Start camera
+    // Setup audio visualization
+    function setupAudioVisualization(stream) {
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        microphone = audioContext.createMediaStreamSource(stream);
+        javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
+
+        analyser.smoothingTimeConstant = 0.8;
+        analyser.fftSize = 1024;
+
+        microphone.connect(analyser);
+        analyser.connect(javascriptNode);
+        javascriptNode.connect(audioContext.destination);
+
+        javascriptNode.onaudioprocess = function() {
+          const array = new Uint8Array(analyser.frequencyBinCount);
+          analyser.getByteFrequencyData(array);
+          let values = 0;
+
+          const length = array.length;
+          for (let i = 0; i < length; i++) {
+            values += array[i];
+          }
+
+          const average = values / length;
+          const percentage = Math.min(100, (average / 256) * 100);
+          audioLevel.style.width = percentage + '%';
+        };
+      } catch (e) {
+        console.warn('Audio visualization not supported:', e);
+      }
+    }
+
+    // Toggle audio on/off
+    function toggleAudio(enable) {
+      if (currentStream) {
+        const audioTracks = currentStream.getAudioTracks();
+        audioTracks.forEach(track => {
+          track.enabled = enable;
+        });
+        audioStatus.textContent = enable ? 'Enabled' : 'Muted';
+        
+        if (enable && audioContext && audioContext.state === 'suspended') {
+          audioContext.resume();
+        }
+      }
+    }
+
+    // Start camera and microphone
     async function startCamera() {
       try {
-        updateStatus("Starting camera...", false);
+        updateStatus("Requesting camera and microphone access...", false);
+        
         const stream = await navigator.mediaDevices.getUserMedia({ 
           video: { 
             width: { ideal: 1280 },
             height: { ideal: 720 },
             frameRate: { ideal: 30 }
           }, 
-          audio: false 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1,
+            sampleRate: 44100,
+            sampleSize: 16
+          }
         });
         
         video.srcObject = stream;
         currentStream = stream;
-        updateStatus("Camera started. Connecting to server...", false);
+        
+        // Setup audio visualization
+        setupAudioVisualization(stream);
+        
+        updateStatus("Camera and microphone started. Connecting to server...", false);
         initWebSocket(stream);
       } catch (err) {
-        updateStatus("❌ Camera access failed: " + err.message, false);
+        if (err.name === 'NotAllowedError') {
+          updateStatus("❌ Camera/microphone access denied. Please allow permissions and refresh.", false);
+        } else if (err.name === 'NotFoundError') {
+          updateStatus("❌ No camera/microphone found. Please check your devices.", false);
+        } else {
+          updateStatus("❌ Camera/microphone access failed: " + err.message, false);
+        }
         console.error(err);
       }
     }
@@ -334,8 +511,9 @@
             ]
           });
 
-          // Add all tracks to the connection
+          // Add ALL tracks (both video and audio) to the connection
           stream.getTracks().forEach(track => {
+            console.log(`Adding track: ${track.kind} (enabled: ${track.enabled})`);
             pc.addTrack(track, stream);
           });
 
@@ -397,6 +575,11 @@
       };
     }
 
+    // Audio toggle event
+    audioToggle.addEventListener('change', (e) => {
+      toggleAudio(e.target.checked);
+    });
+
     // Copy link to clipboard
     copyBtn.addEventListener('click', async () => {
       try {
@@ -413,6 +596,12 @@
 
     // New stream button
     newStreamBtn.addEventListener('click', () => {
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+      }
+      if (audioContext) {
+        audioContext.close();
+      }
       window.location.reload();
     });
 
