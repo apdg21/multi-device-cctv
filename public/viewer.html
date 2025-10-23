@@ -190,13 +190,45 @@
       border-radius: 10px;
       font-size: 0.9rem;
     }
+  .audio-controls {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 15px;
+      padding: 1rem;
+      margin: 1rem 0;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .volume-control {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    
+    .volume-slider {
+      width: 150px;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 5px;
+      outline: none;
+    }
+    
+    .audio-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.1);
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <h1>👀 SecureCam Viewer</h1>
-      <p class="subtitle">Watching secure live stream</p>
+      <p class="subtitle">Watching secure live stream with audio</p>
     </header>
     
     <div class="status-card">
@@ -211,6 +243,20 @@
       
       <div id="errorMessage" class="error-message" style="display: none;"></div>
     </div>
+
+    <!-- Audio Controls -->
+    <div class="audio-controls">
+      <div class="volume-control">
+        <span>Volume:</span>
+        <input type="range" min="0" max="100" value="100" class="volume-slider" id="volumeSlider">
+        <span id="volumeValue">100%</span>
+        
+        <div class="audio-indicator">
+          <span>🔊 Audio:</span>
+          <span id="audioStatus">Waiting...</span>
+        </div>
+      </div>
+    </div>
     
     <div class="video-container">
       <div class="video-overlay">LIVE</div>
@@ -223,6 +269,7 @@
     <div class="stats">
       <div class="stat-item" id="connectionState">Connection: Connecting</div>
       <div class="stat-item" id="iceState">ICE: New</div>
+      <div class="stat-item" id="audioTrackInfo">Audio: No track</div>
     </div>
     
     <div class="controls">
@@ -241,8 +288,12 @@
     const errorMessage = document.getElementById("errorMessage");
     const connectionState = document.getElementById("connectionState");
     const iceState = document.getElementById("iceState");
+    const audioTrackInfo = document.getElementById("audioTrackInfo");
     const reconnectBtn = document.getElementById("reconnectBtn");
     const fullscreenBtn = document.getElementById("fullscreenBtn");
+    const volumeSlider = document.getElementById("volumeSlider");
+    const volumeValue = document.getElementById("volumeValue");
+    const audioStatus = document.getElementById("audioStatus");
 
     let socket;
     let pc;
@@ -252,6 +303,21 @@
     function updateStatus(message, state = 'connecting') {
       statusText.textContent = message;
       statusDot.className = `indicator-dot ${state}`;
+    }
+
+    // Update audio track info
+    function updateAudioTrackInfo() {
+      if (video.srcObject) {
+        const streams = video.srcObject.getTracks();
+        const audioTracks = streams.filter(track => track.kind === 'audio');
+        if (audioTracks.length > 0) {
+          audioTrackInfo.textContent = `Audio: ${audioTracks[0].enabled ? 'Active' : 'Muted'}`;
+          audioStatus.textContent = 'Connected';
+        } else {
+          audioTrackInfo.textContent = 'Audio: No track';
+          audioStatus.textContent = 'No audio';
+        }
+      }
     }
 
     // Show error message
@@ -265,6 +331,13 @@
     function hideError() {
       errorMessage.style.display = 'none';
     }
+
+    // Volume control
+    volumeSlider.addEventListener('input', (e) => {
+      const volume = e.target.value / 100;
+      video.volume = volume;
+      volumeValue.textContent = e.target.value + '%';
+    });
 
     // Initialize connection
     function initConnection() {
@@ -311,12 +384,25 @@
             });
 
             pc.ontrack = (e) => {
-              console.log('Track received:', e.track.kind);
+              console.log('Track received:', e.track.kind, e.track);
+              
               if (e.streams && e.streams[0]) {
                 video.srcObject = e.streams[0];
                 videoPlaceholder.style.display = 'none';
                 video.style.display = 'block';
+                
+                // Enable audio playback
+                video.muted = false;
+                video.volume = volumeSlider.value / 100;
+                
                 updateStatus('✅ Connected to stream!', 'streaming');
+                updateAudioTrackInfo();
+                
+                // Monitor audio tracks
+                e.streams[0].onaddtrack = () => {
+                  console.log('Audio track added');
+                  updateAudioTrackInfo();
+                };
               }
             };
 
@@ -408,15 +494,6 @@
         video.webkitRequestFullscreen();
       } else if (video.mozRequestFullScreen) {
         video.mozRequestFullScreen();
-      }
-    });
-
-    // Handle page visibility changes
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) {
-        console.log('Page hidden');
-      } else {
-        console.log('Page visible');
       }
     });
 
