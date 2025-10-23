@@ -2,68 +2,426 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SecureCam Viewer</title>
   <style>
-    body { font-family: sans-serif; background: #000; color: #eee; text-align: center; }
-    video { width: 80%; max-width: 800px; border: 2px solid #0af; border-radius: 10px; margin-top: 1rem; }
+    :root {
+      --primary: #0088ff;
+      --secondary: #00ff88;
+      --dark: #0a0a0a;
+      --darker: #050505;
+      --light: #ffffff;
+      --gray: #444444;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, var(--darker) 0%, var(--dark) 100%);
+      color: var(--light);
+      min-height: 100vh;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .container {
+      max-width: 1000px;
+      width: 100%;
+      text-align: center;
+    }
+    
+    header {
+      margin-bottom: 2rem;
+      padding: 1rem;
+    }
+    
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    
+    .subtitle {
+      color: #cccccc;
+      font-size: 1.1rem;
+    }
+    
+    .status-card {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 15px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+    }
+    
+    .status-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 25px;
+      background: rgba(255, 255, 255, 0.1);
+      margin-bottom: 1rem;
+    }
+    
+    .indicator-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ff4444;
+      animation: pulse 2s infinite;
+    }
+    
+    .indicator-dot.connected {
+      background: var(--primary);
+    }
+    
+    .indicator-dot.streaming {
+      background: var(--secondary);
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    .video-container {
+      position: relative;
+      border-radius: 15px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      margin-bottom: 2rem;
+      background: #000;
+      min-height: 400px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    video {
+      width: 100%;
+      max-width: 900px;
+      display: block;
+    }
+    
+    .video-overlay {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      background: rgba(255, 0, 0, 0.8);
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      font-size: 0.9rem;
+      font-weight: bold;
+    }
+    
+    .video-placeholder {
+      color: #666;
+      font-size: 1.2rem;
+      padding: 2rem;
+    }
+    
+    .connection-info {
+      background: rgba(0, 136, 255, 0.1);
+      border: 1px solid var(--primary);
+      border-radius: 10px;
+      padding: 1rem;
+      margin: 1rem 0;
+      font-family: monospace;
+      font-size: 0.9rem;
+    }
+    
+    .controls {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+    
+    button {
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border: none;
+      color: white;
+      padding: 0.8rem 1.5rem;
+      border-radius: 25px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(0, 136, 255, 0.3);
+    }
+    
+    .error-message {
+      background: rgba(255, 0, 0, 0.1);
+      border: 1px solid #ff4444;
+      border-radius: 10px;
+      padding: 1rem;
+      margin: 1rem 0;
+      color: #ff8888;
+    }
+    
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+    
+    .stat-item {
+      background: rgba(255, 255, 255, 0.05);
+      padding: 0.8rem 1.5rem;
+      border-radius: 10px;
+      font-size: 0.9rem;
+    }
   </style>
 </head>
 <body>
-  <h1>👀 SecureCam Viewer</h1>
-  <p id="status">Connecting...</p>
-  <video id="video" autoplay playsinline></video>
+  <div class="container">
+    <header>
+      <h1>👀 SecureCam Viewer</h1>
+      <p class="subtitle">Watching secure live stream</p>
+    </header>
+    
+    <div class="status-card">
+      <div class="status-indicator">
+        <div class="indicator-dot" id="statusDot"></div>
+        <span id="statusText">Connecting to stream...</span>
+      </div>
+      
+      <div id="connectionInfo" class="connection-info" style="display: none;">
+        Stream ID: <span id="streamId"></span>
+      </div>
+      
+      <div id="errorMessage" class="error-message" style="display: none;"></div>
+    </div>
+    
+    <div class="video-container">
+      <div class="video-overlay">LIVE</div>
+      <video id="video" autoplay playsinline></video>
+      <div id="videoPlaceholder" class="video-placeholder">
+        Waiting for video stream...
+      </div>
+    </div>
+    
+    <div class="stats">
+      <div class="stat-item" id="connectionState">Connection: Connecting</div>
+      <div class="stat-item" id="iceState">ICE: New</div>
+    </div>
+    
+    <div class="controls">
+      <button id="reconnectBtn">Reconnect</button>
+      <button id="fullscreenBtn">Fullscreen</button>
+    </div>
+  </div>
 
   <script>
-    const socket = new WebSocket(window.location.origin.replace(/^http/, "ws"));
     const video = document.getElementById("video");
-    const status = document.getElementById("status");
-    let pc;
+    const videoPlaceholder = document.getElementById("videoPlaceholder");
+    const statusText = document.getElementById("statusText");
+    const statusDot = document.getElementById("statusDot");
+    const connectionInfo = document.getElementById("connectionInfo");
+    const streamIdElement = document.getElementById("streamId");
+    const errorMessage = document.getElementById("errorMessage");
+    const connectionState = document.getElementById("connectionState");
+    const iceState = document.getElementById("iceState");
+    const reconnectBtn = document.getElementById("reconnectBtn");
+    const fullscreenBtn = document.getElementById("fullscreenBtn");
 
-    socket.onopen = () => {
+    let socket;
+    let pc;
+    let streamId;
+
+    // Update status display
+    function updateStatus(message, state = 'connecting') {
+      statusText.textContent = message;
+      statusDot.className = `indicator-dot ${state}`;
+    }
+
+    // Show error message
+    function showError(message) {
+      errorMessage.textContent = message;
+      errorMessage.style.display = 'block';
+      updateStatus('❌ Connection failed', 'error');
+    }
+
+    // Hide error message
+    function hideError() {
+      errorMessage.style.display = 'none';
+    }
+
+    // Initialize connection
+    function initConnection() {
+      hideError();
+      updateStatus('Connecting to stream...', 'connecting');
+      
       const params = new URLSearchParams(window.location.search);
-      const streamId = params.get("stream");
+      streamId = params.get("stream");
+      
       if (!streamId) {
-        status.textContent = "❌ Missing stream ID in URL.";
+        showError("❌ Missing stream ID in URL. Please check the link.");
         return;
       }
-      socket.send(JSON.stringify({ type: "viewer-join", streamId }));
-      status.textContent = "Waiting for streamer...";
-    };
 
-    socket.onmessage = async (event) => {
-      const msg = JSON.parse(event.data);
+      streamIdElement.textContent = streamId;
+      connectionInfo.style.display = 'block';
 
-      // Streamer's offer arrives
-      if (msg.type === "streamer-offer") {
-        pc = new RTCPeerConnection();
+      // Create WebSocket connection
+      socket = new WebSocket(window.location.origin.replace(/^http/, "ws"));
 
-        pc.ontrack = (e) => {
-          video.srcObject = e.streams[0];
-          status.textContent = "✅ Connected to stream!";
-        };
+      socket.onopen = () => {
+        updateStatus('Connected to server. Waiting for stream...', 'connected');
+        socket.send(JSON.stringify({ type: "viewer-join", streamId }));
+      };
 
-        pc.onicecandidate = (e) => {
-          if (e.candidate) {
-            socket.send(JSON.stringify({ type: "viewer-candidate", candidate: e.candidate }));
-          }
-        };
+      socket.onmessage = async (event) => {
+        const msg = JSON.parse(event.data);
 
-        await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
-
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.send(JSON.stringify({ type: "viewer-answer", answer }));
-      }
-
-      // Add incoming ICE candidates
-      else if (msg.type === "streamer-candidate") {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-        } catch (e) {
-          console.warn("Add ICE error:", e);
+        if (msg.type === "error") {
+          showError(`Server error: ${msg.message}`);
+          return;
         }
+
+        // Streamer's offer arrives
+        if (msg.type === "streamer-offer") {
+          updateStatus('Receiving stream offer...', 'connected');
+          
+          try {
+            pc = new RTCPeerConnection({
+              iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+              ]
+            });
+
+            pc.ontrack = (e) => {
+              console.log('Track received:', e.track.kind);
+              if (e.streams && e.streams[0]) {
+                video.srcObject = e.streams[0];
+                videoPlaceholder.style.display = 'none';
+                video.style.display = 'block';
+                updateStatus('✅ Connected to stream!', 'streaming');
+              }
+            };
+
+            pc.onconnectionstatechange = () => {
+              connectionState.textContent = `Connection: ${pc.connectionState}`;
+              console.log('Connection state:', pc.connectionState);
+              
+              if (pc.connectionState === 'connected') {
+                updateStatus('✅ Stream connected!', 'streaming');
+              } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+                updateStatus('❌ Stream disconnected', 'error');
+              }
+            };
+
+            pc.oniceconnectionstatechange = () => {
+              iceState.textContent = `ICE: ${pc.iceConnectionState}`;
+              console.log('ICE connection state:', pc.iceConnectionState);
+            };
+
+            pc.onicecandidate = (e) => {
+              if (e.candidate) {
+                socket.send(JSON.stringify({ 
+                  type: "viewer-candidate", 
+                  candidate: e.candidate 
+                }));
+              }
+            };
+
+            // Set remote description and create answer
+            await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
+            console.log('✅ Remote description set');
+
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.send(JSON.stringify({ 
+              type: "viewer-answer", 
+              answer: answer 
+            }));
+            
+            console.log('✅ Answer created and sent');
+
+          } catch (error) {
+            console.error('Error handling streamer offer:', error);
+            showError('Failed to establish connection: ' + error.message);
+          }
+        }
+
+        // Add incoming ICE candidates
+        else if (msg.type === "streamer-candidate") {
+          if (pc && msg.candidate) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            } catch (e) {
+              console.warn("Add ICE candidate error:", e);
+            }
+          }
+        }
+      };
+
+      socket.onclose = () => {
+        updateStatus('❌ Disconnected from server', 'error');
+      };
+
+      socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        showError('Connection error. Please try reconnecting.');
+      };
+    }
+
+    // Reconnect button
+    reconnectBtn.addEventListener('click', () => {
+      if (socket) {
+        socket.close();
       }
-    };
+      if (pc) {
+        pc.close();
+      }
+      video.style.display = 'none';
+      videoPlaceholder.style.display = 'block';
+      video.srcObject = null;
+      initConnection();
+    });
+
+    // Fullscreen button
+    fullscreenBtn.addEventListener('click', () => {
+      if (video.requestFullscreen) {
+        video.requestFullscreen();
+      } else if (video.webkitRequestFullscreen) {
+        video.webkitRequestFullscreen();
+      } else if (video.mozRequestFullScreen) {
+        video.mozRequestFullScreen();
+      }
+    });
+
+    // Handle page visibility changes
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        console.log('Page hidden');
+      } else {
+        console.log('Page visible');
+      }
+    });
+
+    // Start the connection
+    initConnection();
   </script>
 </body>
 </html>
