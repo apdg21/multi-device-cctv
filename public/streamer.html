@@ -18,29 +18,59 @@
 
   <script>
     const WS_URL = window.location.origin.replace(/^http/, 'ws');
-    const socket = new WebSocket(WS_URL);
-    const localVideo = document.getElementById('localVideo');
-    const status = document.getElementById('status');
-    let pc;
+    const socket = new WebSocket(window.location.origin.replace(/^http/, "ws"));
+const video = document.getElementById("video");
+let pc;
 
-    socket.onopen = () => {
-      console.log('Connected to signaling server');
-      status.textContent = 'Connected to signaling server';
+// When viewer connects
+socket.onopen = () => {
+  const params = new URLSearchParams(window.location.search);
+  const streamId = params.get("stream");
+
+  socket.send(JSON.stringify({ type: "viewer-join", streamId }));
+};
+
+// Handle messages
+socket.onmessage = async (event) => {
+  const msg = JSON.parse(event.data);
+
+  // When offer arrives from streamer
+  if (msg.type === "streamer-offer") {
+    pc = new RTCPeerConnection();
+
+    pc.ontrack = (e) => {
+      video.srcObject = e.streams[0];
     };
 
-    socket.onmessage = async (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.type === 'viewer-answer') {
-        console.log('Received answer from viewer');
-        await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
-      } else if (msg.type === 'viewer-candidate') {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-        } catch (e) {
-          console.warn('Add ICE candidate error:', e);
-        }
+    // When ICE candidates appear locally, send them to streamer
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        socket.send(
+          JSON.stringify({
+            type: "viewer-candidate",
+            candidate: e.candidate,
+          })
+        );
       }
     };
+
+    await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    socket.send(JSON.stringify({ type: "viewer-answer", answer }));
+  }
+
+  // Add streamer ICE candidates
+  else if (msg.type === "streamer-candidate") {
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+    } catch (e) {
+      console.warn("Add ICE candidate error:", e);
+    }
+  }
+};
 
     async function startStreaming() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
@@ -66,3 +96,4 @@
   </script>
 </body>
 </html>
+
