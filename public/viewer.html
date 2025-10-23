@@ -2,74 +2,68 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SecureCam Viewer</title>
   <style>
-    body { font-family: sans-serif; text-align: center; background: #111; color: #eee; }
-    video { width: 80%; margin-top: 1rem; border: 2px solid #555; border-radius: 10px; }
+    body { font-family: sans-serif; background: #000; color: #eee; text-align: center; }
+    video { width: 80%; max-width: 800px; border: 2px solid #0af; border-radius: 10px; margin-top: 1rem; }
   </style>
 </head>
 <body>
-  <h1>👁️ SecureCam Viewer</h1>
-  <video id="remoteVideo" autoplay playsinline></video>
-  <p id="status"></p>
+  <h1>👀 SecureCam Viewer</h1>
+  <p id="status">Connecting...</p>
+  <video id="video" autoplay playsinline></video>
 
   <script>
     const socket = new WebSocket(window.location.origin.replace(/^http/, "ws"));
-const video = document.getElementById("video");
-let pc;
+    const video = document.getElementById("video");
+    const status = document.getElementById("status");
+    let pc;
 
-// When viewer connects
-socket.onopen = () => {
-  const params = new URLSearchParams(window.location.search);
-  const streamId = params.get("stream");
-
-  socket.send(JSON.stringify({ type: "viewer-join", streamId }));
-};
-
-// Handle messages
-socket.onmessage = async (event) => {
-  const msg = JSON.parse(event.data);
-
-  // When offer arrives from streamer
-  if (msg.type === "streamer-offer") {
-    pc = new RTCPeerConnection();
-
-    pc.ontrack = (e) => {
-      video.srcObject = e.streams[0];
+    socket.onopen = () => {
+      const params = new URLSearchParams(window.location.search);
+      const streamId = params.get("stream");
+      if (!streamId) {
+        status.textContent = "❌ Missing stream ID in URL.";
+        return;
+      }
+      socket.send(JSON.stringify({ type: "viewer-join", streamId }));
+      status.textContent = "Waiting for streamer...";
     };
 
-    // When ICE candidates appear locally, send them to streamer
-    pc.onicecandidate = (e) => {
-      if (e.candidate) {
-        socket.send(
-          JSON.stringify({
-            type: "viewer-candidate",
-            candidate: e.candidate,
-          })
-        );
+    socket.onmessage = async (event) => {
+      const msg = JSON.parse(event.data);
+
+      // Streamer's offer arrives
+      if (msg.type === "streamer-offer") {
+        pc = new RTCPeerConnection();
+
+        pc.ontrack = (e) => {
+          video.srcObject = e.streams[0];
+          status.textContent = "✅ Connected to stream!";
+        };
+
+        pc.onicecandidate = (e) => {
+          if (e.candidate) {
+            socket.send(JSON.stringify({ type: "viewer-candidate", candidate: e.candidate }));
+          }
+        };
+
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.send(JSON.stringify({ type: "viewer-answer", answer }));
+      }
+
+      // Add incoming ICE candidates
+      else if (msg.type === "streamer-candidate") {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+        } catch (e) {
+          console.warn("Add ICE error:", e);
+        }
       }
     };
-
-    await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
-
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    socket.send(JSON.stringify({ type: "viewer-answer", answer }));
-  }
-
-  // Add streamer ICE candidates
-  else if (msg.type === "streamer-candidate") {
-    try {
-      await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-    } catch (e) {
-      console.warn("Add ICE candidate error:", e);
-    }
-  }
-};
-
   </script>
 </body>
 </html>
-
