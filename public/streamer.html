@@ -1,244 +1,68 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Streamer — SecureCam (minimal WS)</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SecureCam Streamer</title>
   <style>
-    body { font-family: system-ui, -apple-system, sans-serif; margin: 18px; }
-    video { width: 640px; height: 360px; background:#000; }
-    .controls { margin-top: 12px; }
-    input[type=text]{ width: 420px; }
-    .viewer-list { margin-top:12px; }
-    code { background:#f3f3f3; padding:3px 6px; border-radius:4px; }
+    body { font-family: sans-serif; text-align: center; background: #111; color: #eee; }
+    video { width: 80%; margin-top: 1rem; border: 2px solid #555; border-radius: 10px; }
+    button { margin: 1rem; padding: 10px 20px; font-size: 1rem; }
   </style>
 </head>
 <body>
-  <h1>Streamer</h1>
-  <video id="localVideo" autoplay muted playsinline></video>
-  <div class="controls">
-    <button id="startBtn">Start stream</button>
-    <button id="stopBtn" disabled>Stop stream</button>
-  </div>
+  <h1>🎥 SecureCam Streamer</h1>
+  <video id="localVideo" autoplay playsinline muted></video><br />
+  <button id="startBtn">Start Streaming</button>
+  <p id="status"></p>
 
-  <div class="info" style="margin-top:8px">
-    <div>Share this viewer URL: <code id="shareLink">—</code></div>
-  </div>
+  <script>
+    const WS_URL = window.location.origin.replace(/^http/, 'ws');
+    const socket = new WebSocket(WS_URL);
+    const localVideo = document.getElementById('localVideo');
+    const status = document.getElementById('status');
+    let pc;
 
-  <div class="viewer-list">
-    <h3>Active viewers</h3>
-    <ul id="viewers"></ul>
-  </div>
-
-<script>
-(async function(){
-  const startBtn = document.getElementById('startBtn');
-  const stopBtn = document.getElementById('stopBtn');
-  const localVideo = document.getElementById('localVideo');
-  const shareLinkEl = document.getElementById('shareLink');
-  const viewersList = document.getElementById('viewers');
-
-  let localStream = null;
-  let ws = null;
-  let streamId = null;
-  // store per-viewer peerConnections: viewerId -> pc
-  const pcs = new Map();
-
-  const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
-  startBtn.onclick = async () => {
-    startBtn.disabled = true;
-    try {
-      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      localVideo.srcObject = localStream;
-    } catch (err) {
-      alert('Could not get camera/mic: ' + err.message);
-      startBtn.disabled = false;
-      return;
-    }
-
-    // open websocket & identify as streamer
-    ws = new WebSocket(`${location.origin.replace(/^http/, 'ws')}`);
-    ws.onopen = () => {
-      console.log('WS open - identifying as streamer');
-      ws.send(JSON.stringify({ type: 'identify', role: 'streamer' }));
+    socket.onopen = () => {
+      console.log('Connected to signaling server');
+      status.textContent = 'Connected to signaling server';
     };
 
-    ws.onmessage = async (ev) => {
-      let msg;
-      try { msg = JSON.parse(ev.data); } catch(e){ console.warn('bad message'); return; }
-      // handle messages
-      if (msg.type === 'identified' && msg.role === 'streamer') {
-        streamId = msg.streamId;
-        const viewerUrl = `${location.origin}/viewer.html?stream=${streamId}`;
-        shareLinkEl.textContent = viewerUrl;
-        stopBtn.disabled = false;
-        console.log('Streaming ready, streamId=', streamId);
-        return;
-      }
-
-      if (msg.type === 'viewer-joined') {
-        const viewerId = msg.viewerId;
-        addViewerItem(viewerId);
-        // create a per-viewer PeerConnection, add tracks, create offer and send to viewer
-        await createOfferForViewer(viewerId);
-        return;
-      }
-
-      if (msg.type === 'answer') {
-        // streamer receives answer destined to streamId (toStreamer true)
-        const { from: viewerId, sdp } = msg;
-        const pc = pcs.get(viewerId);
-        if (!pc) {
-          console.warn('No pc for viewer', viewerId);
-          return;
-        }
+    socket.onmessage = async (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'viewer-answer') {
+        console.log('Received answer from viewer');
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
+      } else if (msg.type === 'viewer-candidate') {
         try {
-          await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
-          console.log('Set remote description (answer) for viewer', viewerId);
-        } catch (err) {
-          console.error('Error setting remote description (answer):', err);
+          await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+        } catch (e) {
+          console.warn('Add ICE candidate error:', e);
         }
-        return;
       }
+    };
 
-      if (msg.type === 'candidate') {
-        // candidate forwarded to streamer
-        const { from: viewerId, candidate } = msg;
-        const pc = pcs.get(viewerId);
-        if (!pc) {
-          console.warn('No pc for viewer (candidate)', viewerId);
-          return;
+    async function startStreaming() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      localVideo.srcObject = stream;
+
+      pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.send(JSON.stringify({ type: 'streamer-candidate', candidate: event.candidate }));
         }
-        try {
-          await pc.addIceCandidate(candidate);
-          console.log('Added remote ICE candidate for viewer', viewerId);
-        } catch (err) {
-          console.warn('Error adding remote candidate:', err);
-        }
-        return;
-      }
+      };
 
-      if (msg.type === 'viewer-left') {
-        const vid = msg.viewerId;
-        removeViewerItem(vid);
-        cleanupViewerPC(vid);
-        return;
-      }
-
-      if (msg.type === 'stream-ended') {
-        alert('A viewer reported stream ended or streamer closed.');
-        return;
-      }
-    };
-
-    ws.onclose = () => { console.log('WS closed'); };
-
-  };
-
-  stopBtn.onclick = () => {
-    // close all pcs
-    for (const [vid] of pcs.entries()) cleanupViewerPC(vid);
-    if (ws) try { ws.close(); } catch(_) {}
-    if (localStream) {
-      for (const t of localStream.getTracks()) t.stop();
-      localStream = null;
-      localVideo.srcObject = null;
-    }
-    shareLinkEl.textContent = '—';
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
-    viewersList.innerHTML = '';
-  };
-
-  function addViewerItem(viewerId) {
-    const li = document.createElement('li');
-    li.id = 'viewer-' + viewerId;
-    li.textContent = viewerId + ' ';
-    const btn = document.createElement('button');
-    btn.textContent = 'Kick';
-    btn.onclick = () => {
-      // notify server to close that viewer (viewer socket will close)
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        sendWs({ type: 'leave', to: streamId, toStreamer: true, viewerId, from: streamId });
-      }
-      cleanupViewerPC(viewerId);
-      li.remove();
-    };
-    li.appendChild(btn);
-    viewersList.appendChild(li);
-  }
-
-  function removeViewerItem(viewerId) {
-    const el = document.getElementById('viewer-' + viewerId);
-    if (el) el.remove();
-  }
-
-  function cleanupViewerPC(viewerId) {
-    const pc = pcs.get(viewerId);
-    if (pc) {
-      try { pc.close(); } catch(_) {}
-      pcs.delete(viewerId);
-      console.log('Closed pc for', viewerId);
-    }
-  }
-
-  function sendWs(obj) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(obj));
-    }
-  }
-
-  async function createOfferForViewer(viewerId) {
-    // create a per-viewer PeerConnection
-    const pc = new RTCPeerConnection(configuration);
-
-    // add local tracks
-    if (localStream) {
-      for (const track of localStream.getTracks()) {
-        pc.addTrack(track, localStream);
-      }
-    }
-
-    // send ICE candidates to viewer via server
-    pc.onicecandidate = (ev) => {
-      if (!ev.candidate) return;
-      sendWs({
-        type: 'candidate',
-        from: streamId,
-        to: viewerId,
-        toViewer: true,
-        candidate: ev.candidate
-      });
-    };
-
-    // optional show connection state
-    pc.onconnectionstatechange = () => {
-      console.log('PC state for', viewerId, pc.connectionState);
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
-        // cleanup after a bit
-      }
-    };
-
-    pcs.set(viewerId, pc);
-
-    // create offer for this viewer and send it through server
-    try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      sendWs({
-        type: 'offer',
-        from: streamId,
-        to: viewerId,
-        toViewer: true,
-        sdp: offer.sdp
-      });
-      console.log('Sent offer for viewer', viewerId);
-    } catch (err) {
-      console.error('Failed createOffer/setLocalDescription:', err);
-    }
-  }
 
-})();
-</script>
+      socket.send(JSON.stringify({ type: 'streamer-offer', offer }));
+      status.textContent = 'Streaming started! Viewers can now connect.';
+    }
+
+    document.getElementById('startBtn').onclick = startStreaming;
+  </script>
 </body>
 </html>
