@@ -15,22 +15,20 @@ const PORT = process.env.PORT || 10000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Serve static files from public directory
-app.use(express.static(path.join(__dirname, "public")));
+// Serve static files from current directory (instead of public)
+app.use(express.static(__dirname));
 
-// Serve the main page
+// Serve the HTML files directly
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+  res.sendFile(path.join(__dirname, "streamer.html"));
 });
 
-// Serve streamer page
 app.get("/streamer", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "streamer.html"));
+  res.sendFile(path.join(__dirname, "streamer.html"));
 });
 
-// Serve viewer page
 app.get("/viewer", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "viewer.html"));
+  res.sendFile(path.join(__dirname, "viewer.html"));
 });
 
 // Health check endpoint
@@ -49,7 +47,6 @@ function getBaseUrl() {
     return process.env.RENDER_EXTERNAL_URL;
   }
   if (process.env.NODE_ENV === 'production') {
-    // In production, you might want to set this environment variable
     return process.env.BASE_URL || `http://localhost:${PORT}`;
   }
   return `http://localhost:${PORT}`;
