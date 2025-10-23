@@ -17,74 +17,52 @@
   <p id="status"></p>
 
   <script>
-    const socket = new WebSocket(window.location.origin.replace(/^http/, "ws"));
-let pc;
+    const WS_URL = window.location.origin.replace(/^http/, 'ws');
+    const socket = new WebSocket(WS_URL);
+    const localVideo = document.getElementById('localVideo');
+    const status = document.getElementById('status');
+    let pc;
 
-// When connected to WebSocket
-socket.onopen = () => {
-  socket.send(JSON.stringify({ type: 'streamer-join' }));
-};
+    socket.onopen = () => {
+      console.log('Connected to signaling server');
+      status.textContent = 'Connected to signaling server';
+    };
 
-// Handle incoming messages from the signaling server
-socket.onmessage = async (event) => {
-  const msg = JSON.parse(event.data);
-
-  if (msg.type === 'stream-info') {
-    // Display viewer link
-    document.getElementById('status').innerHTML = `
-      ✅ Stream ready!<br>
-      <strong>Viewer Link:</strong> 
-      <a href="${msg.viewerUrl}" target="_blank">${msg.viewerUrl}</a>
-    `;
-  }
-
-  // When a viewer joins, create and send an offer
-  else if (msg.type === 'viewer-joined') {
-    pc = new RTCPeerConnection();
-
-    // Add streamer’s video
-    const stream = document.getElementById('video').srcObject;
-    for (const track of stream.getTracks()) {
-      pc.addTrack(track, stream);
-    }
-
-    // When local ICE candidates are ready, send to viewer
-    pc.onicecandidate = (e) => {
-      if (e.candidate) {
-        socket.send(
-          JSON.stringify({
-            type: "streamer-candidate",
-            candidate: e.candidate,
-          })
-        );
+    socket.onmessage = async (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'viewer-answer') {
+        console.log('Received answer from viewer');
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
+      } else if (msg.type === 'viewer-candidate') {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+        } catch (e) {
+          console.warn('Add ICE candidate error:', e);
+        }
       }
     };
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.send(JSON.stringify({ type: "streamer-offer", offer }));
-  }
+    async function startStreaming() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      localVideo.srcObject = stream;
 
-  // Viewer’s answer
-  else if (msg.type === "viewer-answer") {
-    try {
-      await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
-    } catch (err) {
-      console.warn("Error setting viewer answer:", err);
+      pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.send(JSON.stringify({ type: 'streamer-candidate', candidate: event.candidate }));
+        }
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      socket.send(JSON.stringify({ type: 'streamer-offer', offer }));
+      status.textContent = 'Streaming started! Viewers can now connect.';
     }
-  }
 
-  // Viewer’s ICE candidate
-  else if (msg.type === "viewer-candidate") {
-    try {
-      await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-    } catch (err) {
-      console.warn("Error adding viewer candidate:", err);
-    }
-  }
-};
-
+    document.getElementById('startBtn').onclick = startStreaming;
   </script>
 </body>
 </html>
-
