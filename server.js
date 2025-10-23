@@ -2,6 +2,8 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
 import http from "http";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const app = express();
 const server = http.createServer(app);
@@ -9,8 +11,32 @@ const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 10000;
 
-// Serve static HTML files
-app.use(express.static("public"));
+// Get __dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, "public")));
+
+// Serve the main page
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "streamer.html"));
+});
+
+// Serve streamer page
+app.get("/streamer", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "streamer.html"));
+});
+
+// Serve viewer page
+app.get("/viewer", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "viewer.html"));
+});
+
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", streams: streams.size });
+});
 
 console.log("🎥 SecureCam signaling server starting...");
 
@@ -47,7 +73,7 @@ wss.on("connection", (ws) => {
           JSON.stringify({
             type: "stream-info",
             streamId,
-            viewerUrl: `${process.env.RENDER_EXTERNAL_URL || "https://your-app.onrender.com"}/viewer.html?stream=${streamId}`,
+            viewerUrl: `${process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`}/viewer.html?stream=${streamId}`,
           })
         );
         break;
@@ -151,4 +177,7 @@ wss.on("connection", (ws) => {
 
 server.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
+  console.log(`📹 Streamer: http://localhost:${PORT}/streamer`);
+  console.log(`👀 Viewer: http://localhost:${PORT}/viewer`);
+  console.log(`🏠 Home: http://localhost:${PORT}/`);
 });
