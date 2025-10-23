@@ -2,41 +2,309 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SecureCam Streamer</title>
   <style>
-    body { font-family: sans-serif; background: #111; color: #eee; text-align: center; }
-    video { width: 80%; max-width: 800px; border: 2px solid #0f0; border-radius: 10px; margin-top: 1rem; }
-    #status a { color: #0f0; text-decoration: none; font-weight: bold; }
+    :root {
+      --primary: #00ff88;
+      --secondary: #0088ff;
+      --dark: #0a0a0a;
+      --darker: #050505;
+      --light: #ffffff;
+      --gray: #444444;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, var(--darker) 0%, var(--dark) 100%);
+      color: var(--light);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+      padding: 1rem;
+    }
+    
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      display: inline-block;
+    }
+    
+    .subtitle {
+      color: #cccccc;
+      font-size: 1.1rem;
+    }
+    
+    .status-card {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 15px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+    }
+    
+    .status-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 25px;
+      background: rgba(255, 255, 255, 0.1);
+      margin-bottom: 1rem;
+    }
+    
+    .indicator-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ff4444;
+      animation: pulse 2s infinite;
+    }
+    
+    .indicator-dot.connected {
+      background: var(--primary);
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    .viewer-link {
+      background: rgba(0, 255, 136, 0.1);
+      border: 1px solid var(--primary);
+      border-radius: 10px;
+      padding: 1rem;
+      margin: 1rem 0;
+      word-break: break-all;
+    }
+    
+    .viewer-link a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: bold;
+    }
+    
+    .viewer-link a:hover {
+      text-decoration: underline;
+    }
+    
+    .video-container {
+      position: relative;
+      border-radius: 15px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      margin-bottom: 2rem;
+    }
+    
+    video {
+      width: 100%;
+      display: block;
+      background: #000;
+    }
+    
+    .video-overlay {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      font-size: 0.9rem;
+    }
+    
+    .viewers-count {
+      position: absolute;
+      top: 15px;
+      right: 15px;
+      background: rgba(0, 136, 255, 0.8);
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      font-size: 0.9rem;
+    }
+    
+    .controls {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    
+    button {
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border: none;
+      color: white;
+      padding: 0.8rem 1.5rem;
+      border-radius: 25px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(0, 255, 136, 0.3);
+    }
+    
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    
+    .viewers-list {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 15px;
+      padding: 1.5rem;
+      margin-top: 2rem;
+    }
+    
+    .viewers-list h3 {
+      margin-bottom: 1rem;
+      color: var(--secondary);
+    }
+    
+    #viewersContainer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    
+    .viewer-badge {
+      background: rgba(0, 136, 255, 0.2);
+      border: 1px solid var(--secondary);
+      padding: 0.3rem 0.8rem;
+      border-radius: 15px;
+      font-size: 0.8rem;
+    }
   </style>
 </head>
 <body>
-  <h1>📡 SecureCam Streamer</h1>
-  <p id="status">Initializing camera...</p>
-  <video id="video" autoplay playsinline muted></video>
+  <div class="container">
+    <header>
+      <h1>🎥 SecureCam Streamer</h1>
+      <p class="subtitle">Secure, real-time video streaming</p>
+    </header>
+    
+    <div class="status-card">
+      <div class="status-indicator">
+        <div class="indicator-dot" id="statusDot"></div>
+        <span id="statusText">Initializing camera...</span>
+      </div>
+      
+      <div id="streamInfo" style="display: none;">
+        <div class="viewer-link">
+          <strong>Share this link with viewers:</strong><br>
+          <a id="viewerUrl" target="_blank"></a>
+        </div>
+        
+        <div class="viewers-count">
+          👁️ <span id="viewersCount">0</span> viewers connected
+        </div>
+      </div>
+    </div>
+    
+    <div class="video-container">
+      <div class="video-overlay">LIVE</div>
+      <video id="video" autoplay playsinline muted></video>
+    </div>
+    
+    <div class="controls">
+      <button id="copyBtn" disabled>Copy Link</button>
+      <button id="newStreamBtn">New Stream</button>
+    </div>
+    
+    <div class="viewers-list">
+      <h3>Connected Viewers</h3>
+      <div id="viewersContainer"></div>
+    </div>
+  </div>
 
   <script>
     const video = document.getElementById("video");
-    const status = document.getElementById("status");
+    const statusText = document.getElementById("statusText");
+    const statusDot = document.getElementById("statusDot");
+    const viewerUrl = document.getElementById("viewerUrl");
+    const streamInfo = document.getElementById("streamInfo");
+    const copyBtn = document.getElementById("copyBtn");
+    const newStreamBtn = document.getElementById("newStreamBtn");
+    const viewersCount = document.getElementById("viewersCount");
+    const viewersContainer = document.getElementById("viewersContainer");
+
+    let socket;
+    let pc;
+    let currentStream;
+    let connectedViewers = new Set();
+
+    // Update status display
+    function updateStatus(message, isConnected = false) {
+      statusText.textContent = message;
+      statusDot.className = `indicator-dot ${isConnected ? 'connected' : ''}`;
+    }
+
+    // Update viewers display
+    function updateViewersDisplay() {
+      viewersCount.textContent = connectedViewers.size;
+      viewersContainer.innerHTML = '';
+      
+      connectedViewers.forEach(viewerId => {
+        const badge = document.createElement('div');
+        badge.className = 'viewer-badge';
+        badge.textContent = `Viewer ${viewerId.substring(0, 8)}`;
+        viewersContainer.appendChild(badge);
+      });
+    }
 
     // Start camera
     async function startCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        updateStatus("Starting camera...", false);
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 }
+          }, 
+          audio: false 
+        });
+        
         video.srcObject = stream;
-        status.textContent = "Camera started. Connecting to server...";
+        currentStream = stream;
+        updateStatus("Camera started. Connecting to server...", false);
         initWebSocket(stream);
       } catch (err) {
-        status.textContent = "❌ Camera access failed: " + err.message;
+        updateStatus("❌ Camera access failed: " + err.message, false);
         console.error(err);
       }
     }
 
     // Initialize WebSocket signaling
     function initWebSocket(stream) {
-      const socket = new WebSocket(window.location.origin.replace(/^http/, "ws"));
-      let pc;
+      socket = new WebSocket(window.location.origin.replace(/^http/, "ws"));
 
       socket.onopen = () => {
+        updateStatus("Connected to server. Starting stream...", true);
         socket.send(JSON.stringify({ type: "streamer-join" }));
       };
 
@@ -44,33 +312,64 @@
         const msg = JSON.parse(event.data);
 
         if (msg.type === "stream-info") {
-          status.innerHTML = `✅ Stream ready!<br>Viewer Link: 
-            <a href="${msg.viewerUrl}" target="_blank">${msg.viewerUrl}</a>`;
+          viewerUrl.href = msg.viewerUrl;
+          viewerUrl.textContent = msg.viewerUrl;
+          streamInfo.style.display = 'block';
+          copyBtn.disabled = false;
+          updateStatus("✅ Stream is live! Share the link below.", true);
         }
 
         // Viewer connected — create offer
         else if (msg.type === "viewer-joined") {
-          pc = new RTCPeerConnection();
+          const viewerId = msg.viewerId;
+          connectedViewers.add(viewerId);
+          updateViewersDisplay();
+          
+          console.log(`🔄 Creating offer for viewer: ${viewerId}`);
+          
+          pc = new RTCPeerConnection({
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:global.stun.twilio.com:3478' }
+            ]
+          });
 
-          for (const track of stream.getTracks()) {
+          // Add all tracks to the connection
+          stream.getTracks().forEach(track => {
             pc.addTrack(track, stream);
-          }
+          });
+
+          pc.oniceconnectionstatechange = () => {
+            console.log('ICE connection state:', pc.iceConnectionState);
+          };
 
           pc.onicecandidate = (e) => {
             if (e.candidate) {
-              socket.send(JSON.stringify({ type: "streamer-candidate", candidate: e.candidate }));
+              socket.send(JSON.stringify({ 
+                type: "streamer-candidate", 
+                candidate: e.candidate 
+              }));
             }
           };
 
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket.send(JSON.stringify({ type: "streamer-offer", offer }));
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.send(JSON.stringify({ 
+              type: "streamer-offer", 
+              offer: offer 
+            }));
+            console.log('✅ Offer created and sent to viewer');
+          } catch (error) {
+            console.error('Error creating offer:', error);
+          }
         }
 
         // Viewer answer received
         else if (msg.type === "viewer-answer") {
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
+            console.log('✅ Remote description set from viewer answer');
           } catch (e) {
             console.warn("Set remote desc error:", e);
           }
@@ -85,8 +384,39 @@
           }
         }
       };
+
+      socket.onclose = () => {
+        updateStatus("❌ Disconnected from server", false);
+        connectedViewers.clear();
+        updateViewersDisplay();
+      };
+
+      socket.onerror = (error) => {
+        updateStatus("❌ Connection error", false);
+        console.error('WebSocket error:', error);
+      };
     }
 
+    // Copy link to clipboard
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(viewerUrl.href);
+        const originalText = copyBtn.textContent;
+        copyBtn.textContent = '✓ Copied!';
+        setTimeout(() => {
+          copyBtn.textContent = originalText;
+        }, 2000);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+      }
+    });
+
+    // New stream button
+    newStreamBtn.addEventListener('click', () => {
+      window.location.reload();
+    });
+
+    // Start the application
     startCamera();
   </script>
 </body>
