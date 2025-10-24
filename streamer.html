@@ -12,6 +12,7 @@
       --darker: #050505;
       --light: #ffffff;
       --gray: #444444;
+      --warning: #ff6b35;
     }
     
     * {
@@ -183,6 +184,10 @@
       background: linear-gradient(135deg, #ff4444, #ff6b6b);
     }
     
+    .btn-warning {
+      background: linear-gradient(135deg, var(--warning), #ff8c42);
+    }
+    
     .stream-controls {
       background: rgba(255, 255, 255, 0.05);
       border-radius: 15px;
@@ -351,8 +356,36 @@
       color: black;
     }
     
-    .mode-btn:hover:not(.active) {
+    .mode-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    
+    .mode-btn:hover:not(.active):not(:disabled) {
       border-color: var(--secondary);
+    }
+    
+    .warning-banner {
+      background: rgba(255, 107, 53, 0.2);
+      border: 1px solid var(--warning);
+      border-radius: 10px;
+      padding: 1rem;
+      margin: 1rem 0;
+      text-align: center;
+    }
+    
+    .warning-banner h4 {
+      color: var(--warning);
+      margin-bottom: 0.5rem;
+    }
+    
+    .device-info {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 10px;
+      padding: 0.8rem;
+      margin: 0.5rem 0;
+      font-size: 0.9rem;
+      text-align: center;
     }
   </style>
 </head>
@@ -360,13 +393,13 @@
   <div class="container">
     <header>
       <h1>🎥 SecureCam Streamer</h1>
-      <p class="subtitle">Secure, real-time video streaming with multiple sources</p>
+      <p class="subtitle" id="subtitle">Secure, real-time video streaming</p>
     </header>
     
     <div class="status-card">
       <div class="status-indicator">
         <div class="indicator-dot" id="statusDot"></div>
-        <span id="statusText">Select stream source...</span>
+        <span id="statusText">Detecting device capabilities...</span>
       </div>
       
       <div id="streamInfo" style="display: none;">
@@ -379,6 +412,17 @@
           👁️ <span id="viewersCount">0</span> viewers connected
         </div>
       </div>
+    </div>
+
+    <!-- Device Info -->
+    <div class="device-info" id="deviceInfo">
+      <span id="deviceType">Detecting device...</span>
+    </div>
+
+    <!-- Mobile Warning -->
+    <div class="warning-banner" id="mobileWarning" style="display: none;">
+      <h4>📱 Mobile Device Detected</h4>
+      <p>Screen sharing is not available on mobile devices. Please use camera mode for streaming.</p>
     </div>
 
     <!-- Stream Mode Selection -->
@@ -424,6 +468,11 @@
             <option value="tab">Browser Tab</option>
           </select>
         </div>
+      </div>
+      
+      <div class="warning-banner" id="desktopWarning" style="display: none;">
+        <h4>💻 Desktop Feature</h4>
+        <p>Screen sharing works best on desktop browsers like Chrome, Firefox, or Edge.</p>
       </div>
     </div>
 
@@ -487,6 +536,10 @@
     const resolutionSelect = document.getElementById("resolutionSelect");
     const screenSourceSelect = document.getElementById("screenSourceSelect");
     const streamTypeOverlay = document.getElementById("streamTypeOverlay");
+    const deviceInfo = document.getElementById("deviceInfo");
+    const mobileWarning = document.getElementById("mobileWarning");
+    const desktopWarning = document.getElementById("desktopWarning");
+    const subtitle = document.getElementById("subtitle");
 
     let socket;
     let pc;
@@ -499,6 +552,51 @@
     let currentMode = 'camera';
     let cameras = [];
     let currentCameraIndex = 0;
+    let isMobileDevice = false;
+    let screenShareSupported = true;
+
+    // Detect device type and capabilities
+    function detectDevice() {
+      // Mobile detection
+      const userAgent = navigator.userAgent.toLowerCase();
+      isMobileDevice = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
+      
+      // Screen share support detection
+      screenShareSupported = !isMobileDevice && 
+                            navigator.mediaDevices && 
+                            'getDisplayMedia' in navigator.mediaDevices;
+      
+      // Update UI based on detection
+      updateDeviceUI();
+    }
+
+    // Update UI based on device capabilities
+    function updateDeviceUI() {
+      const deviceTypeElement = document.getElementById('deviceType');
+      
+      if (isMobileDevice) {
+        deviceTypeElement.textContent = '📱 Mobile Device';
+        subtitle.textContent = 'Mobile streaming with camera';
+        mobileWarning.style.display = 'block';
+        
+        // Disable screen share on mobile
+        screenModeBtn.disabled = true;
+        screenModeBtn.title = 'Screen sharing not available on mobile';
+        
+        // Show mobile-optimized message
+        statusText.textContent = 'Mobile device detected. Using camera mode.';
+        
+      } else if (!screenShareSupported) {
+        deviceTypeElement.textContent = '💻 Desktop (Limited)';
+        desktopWarning.style.display = 'block';
+        screenModeBtn.disabled = true;
+        screenModeBtn.title = 'Screen sharing not supported in this browser';
+        
+      } else {
+        deviceTypeElement.textContent = '💻 Desktop Device';
+        desktopWarning.style.display = 'block'; // Still show warning for clarity
+      }
+    }
 
     // Update status display
     function updateStatus(message, isConnected = false) {
@@ -535,7 +633,12 @@
         
         if (cameras.length > 0) {
           cameraSelect.value = 0;
+          currentCameraIndex = 0;
         }
+
+        // Hide switch camera button if only one camera
+        switchCameraBtn.style.display = cameras.length > 1 ? 'block' : 'none';
+        
       } catch (error) {
         console.error('Error getting cameras:', error);
       }
@@ -651,6 +754,11 @@
 
     // Start screen share
     async function startScreenShare() {
+      // Check if screen share is supported
+      if (!screenShareSupported) {
+        throw new Error('Screen sharing is not supported on this device/browser');
+      }
+
       try {
         updateStatus("Starting screen share...", false);
         
@@ -904,10 +1012,19 @@
       screenModeBtn.classList.remove('active');
       cameraControls.style.display = 'block';
       screenControls.style.display = 'none';
-      switchCameraBtn.style.display = 'block';
+      switchCameraBtn.style.display = cameras.length > 1 ? 'block' : 'none';
     });
 
     screenModeBtn.addEventListener('click', () => {
+      if (screenModeBtn.disabled) {
+        if (isMobileDevice) {
+          alert('Screen sharing is not available on mobile devices. Please use camera mode.');
+        } else {
+          alert('Screen sharing is not supported in your browser. Please use Chrome, Firefox, or Edge on desktop.');
+        }
+        return;
+      }
+      
       currentMode = 'screen';
       screenModeBtn.classList.add('active');
       cameraModeBtn.classList.remove('active');
@@ -926,8 +1043,16 @@
 
     // Initialize
     async function initialize() {
+      detectDevice();
       await getCameras();
-      updateStatus("Ready! Select stream source and click 'Start Streaming'", false);
+      
+      if (isMobileDevice) {
+        updateStatus("📱 Mobile mode: Camera streaming ready!", false);
+      } else if (!screenShareSupported) {
+        updateStatus("💻 Desktop mode: Camera streaming ready (screen share not supported)", false);
+      } else {
+        updateStatus("💻 Desktop mode: Ready! Choose camera or screen share", false);
+      }
     }
 
     // Start the application
