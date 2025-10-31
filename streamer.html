@@ -505,6 +505,7 @@
       <button id="stopStreamBtn" class="btn-danger" style="display: none;">⏹️ Stop Stream</button>
       <button id="copyBtn" disabled>📋 Copy Link</button>
       <button id="switchCameraBtn" class="btn-secondary">🔄 Switch Camera</button>
+      <button id="refreshCamerasBtn" class="btn-secondary">🔍 Refresh Cameras</button>
     </div>
     
     <div class="viewers-list">
@@ -528,6 +529,7 @@
     const startStreamBtn = document.getElementById("startStreamBtn");
     const stopStreamBtn = document.getElementById("stopStreamBtn");
     const switchCameraBtn = document.getElementById("switchCameraBtn");
+    const refreshCamerasBtn = document.getElementById("refreshCamerasBtn");
     const cameraModeBtn = document.getElementById("cameraModeBtn");
     const screenModeBtn = document.getElementById("screenModeBtn");
     const cameraControls = document.getElementById("cameraControls");
@@ -620,6 +622,23 @@
     // Get available cameras
     async function getCameras() {
       try {
+        updateStatus("🔍 Detecting cameras...", false);
+        
+        // First, request camera permission to ensure devices are available
+        try {
+          const tempStream = await navigator.mediaDevices.getUserMedia({ 
+            video: { width: 1280, height: 720 },
+            audio: false 
+          });
+          // Immediately stop the temporary stream
+          tempStream.getTracks().forEach(track => track.stop());
+          console.log("✅ Camera permission granted");
+        } catch (error) {
+          console.warn('Camera permission not granted yet:', error);
+          // Continue anyway, as some browsers might still enumerate devices
+        }
+
+        // Now enumerate devices
         const devices = await navigator.mediaDevices.enumerateDevices();
         cameras = devices.filter(device => device.kind === 'videoinput');
         
@@ -636,11 +655,18 @@
           currentCameraIndex = 0;
         }
 
-        // Hide switch camera button if only one camera
+        // Update switch camera button visibility
         switchCameraBtn.style.display = cameras.length > 1 ? 'block' : 'none';
+        
+        console.log(`📷 Found ${cameras.length} cameras:`, cameras.map(cam => cam.label || 'Unknown'));
+        
+        return cameras.length;
         
       } catch (error) {
         console.error('Error getting cameras:', error);
+        cameras = [];
+        switchCameraBtn.style.display = 'none';
+        return 0;
       }
     }
 
@@ -741,6 +767,14 @@
         
         // Setup audio visualization
         setupAudioVisualization(stream);
+        
+        // Refresh camera list after stream starts (mobile devices often reveal more cameras after first use)
+        setTimeout(async () => {
+          const cameraCount = await getCameras();
+          if (cameraCount > 1 && isMobileDevice) {
+            updateStatus(`✅ Mobile: ${cameraCount} cameras now available!`, false);
+          }
+        }, 1000);
         
         updateStatus("Camera started. Ready to stream!", false);
         startStreamBtn.disabled = false;
@@ -986,6 +1020,18 @@
     stopStreamBtn.addEventListener('click', stopStream);
     switchCameraBtn.addEventListener('click', switchCamera);
 
+    // Refresh cameras button
+    refreshCamerasBtn.addEventListener('click', async () => {
+      const cameraCount = await getCameras();
+      if (cameraCount === 0) {
+        updateStatus('❌ No cameras detected. Check permissions.', false);
+      } else if (cameraCount === 1) {
+        updateStatus('✅ 1 camera detected', false);
+      } else {
+        updateStatus(`✅ ${cameraCount} cameras detected! Switch camera button available.`, false);
+      }
+    });
+
     // Audio toggle event
     audioToggle.addEventListener('change', (e) => {
       toggleAudio(e.target.checked);
@@ -1044,14 +1090,22 @@
     // Initialize
     async function initialize() {
       detectDevice();
-      await getCameras();
+      
+      // Initial camera detection
+      const cameraCount = await getCameras();
       
       if (isMobileDevice) {
-        updateStatus("📱 Mobile mode: Camera streaming ready!", false);
+        if (cameraCount === 0) {
+          updateStatus("📱 Mobile: Grant camera permission to see all cameras", false);
+        } else if (cameraCount === 1) {
+          updateStatus("📱 Mobile: Camera ready (1 camera detected)", false);
+        } else {
+          updateStatus(`📱 Mobile: Ready! ${cameraCount} cameras detected`, false);
+        }
       } else if (!screenShareSupported) {
-        updateStatus("💻 Desktop mode: Camera streaming ready (screen share not supported)", false);
+        updateStatus("💻 Desktop: Camera streaming ready", false);
       } else {
-        updateStatus("💻 Desktop mode: Ready! Choose camera or screen share", false);
+        updateStatus("💻 Desktop: Ready! Choose camera or screen share", false);
       }
     }
 
