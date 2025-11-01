@@ -387,6 +387,17 @@
       font-size: 0.9rem;
       text-align: center;
     }
+
+    .camera-warning {
+      background: rgba(255, 193, 7, 0.2);
+      border: 1px solid #ffc107;
+      border-radius: 10px;
+      padding: 0.8rem;
+      margin: 0.5rem 0;
+      font-size: 0.9rem;
+      text-align: center;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -417,6 +428,11 @@
     <!-- Device Info -->
     <div class="device-info" id="deviceInfo">
       <span id="deviceType">Detecting device...</span>
+    </div>
+
+    <!-- Camera Warning -->
+    <div class="camera-warning" id="cameraWarning">
+      <span>⚠️ Stop the stream first to switch cameras</span>
     </div>
 
     <!-- Mobile Warning -->
@@ -539,6 +555,7 @@
     const screenSourceSelect = document.getElementById("screenSourceSelect");
     const streamTypeOverlay = document.getElementById("streamTypeOverlay");
     const deviceInfo = document.getElementById("deviceInfo");
+    const cameraWarning = document.getElementById("cameraWarning");
     const mobileWarning = document.getElementById("mobileWarning");
     const desktopWarning = document.getElementById("desktopWarning");
     const subtitle = document.getElementById("subtitle");
@@ -556,19 +573,17 @@
     let currentCameraIndex = 0;
     let isMobileDevice = false;
     let screenShareSupported = true;
+    let isStreaming = false;
 
     // Detect device type and capabilities
     function detectDevice() {
-      // Mobile detection
       const userAgent = navigator.userAgent.toLowerCase();
       isMobileDevice = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
       
-      // Screen share support detection
       screenShareSupported = !isMobileDevice && 
                             navigator.mediaDevices && 
                             'getDisplayMedia' in navigator.mediaDevices;
       
-      // Update UI based on detection
       updateDeviceUI();
     }
 
@@ -580,23 +595,16 @@
         deviceTypeElement.textContent = '📱 Mobile Device';
         subtitle.textContent = 'Mobile streaming with camera';
         mobileWarning.style.display = 'block';
-        
-        // Disable screen share on mobile
         screenModeBtn.disabled = true;
         screenModeBtn.title = 'Screen sharing not available on mobile';
-        
-        // Show mobile-optimized message
-        statusText.textContent = 'Mobile device detected. Using camera mode.';
-        
       } else if (!screenShareSupported) {
         deviceTypeElement.textContent = '💻 Desktop (Limited)';
         desktopWarning.style.display = 'block';
         screenModeBtn.disabled = true;
         screenModeBtn.title = 'Screen sharing not supported in this browser';
-        
       } else {
         deviceTypeElement.textContent = '💻 Desktop Device';
-        desktopWarning.style.display = 'block'; // Still show warning for clarity
+        desktopWarning.style.display = 'block';
       }
     }
 
@@ -604,6 +612,15 @@
     function updateStatus(message, isConnected = false) {
       statusText.textContent = message;
       statusDot.className = `indicator-dot ${isConnected ? 'connected' : ''}`;
+    }
+
+    // Update camera warning visibility
+    function updateCameraWarning() {
+      if (isStreaming && cameras.length > 1) {
+        cameraWarning.style.display = 'block';
+      } else {
+        cameraWarning.style.display = 'none';
+      }
     }
 
     // Update viewers display
@@ -622,8 +639,22 @@
     // Get available cameras
     async function getCameras() {
       try {
+        // If we're streaming, we can't properly enumerate cameras
+        if (isStreaming) {
+          console.log("⚠️ Cannot refresh cameras while streaming - camera is in use");
+          updateStatus("⚠️ Stop stream to refresh cameras", false);
+          return cameras.length;
+        }
+
         updateStatus("🔍 Detecting cameras...", false);
         
+        // Stop any existing stream before enumerating
+        if (currentStream) {
+          currentStream.getTracks().forEach(track => track.stop());
+          currentStream = null;
+          video.srcObject = null;
+        }
+
         // First, request camera permission to ensure devices are available
         try {
           const tempStream = await navigator.mediaDevices.getUserMedia({ 
@@ -635,7 +666,6 @@
           console.log("✅ Camera permission granted");
         } catch (error) {
           console.warn('Camera permission not granted yet:', error);
-          // Continue anyway, as some browsers might still enumerate devices
         }
 
         // Now enumerate devices
@@ -657,6 +687,7 @@
 
         // Update switch camera button visibility
         switchCameraBtn.style.display = cameras.length > 1 ? 'block' : 'none';
+        updateCameraWarning();
         
         console.log(`📷 Found ${cameras.length} cameras:`, cameras.map(cam => cam.label || 'Unknown'));
         
@@ -666,6 +697,7 @@
         console.error('Error getting cameras:', error);
         cameras = [];
         switchCameraBtn.style.display = 'none';
+        updateCameraWarning();
         return 0;
       }
     }
@@ -768,16 +800,7 @@
         // Setup audio visualization
         setupAudioVisualization(stream);
         
-        // Refresh camera list after stream starts (mobile devices often reveal more cameras after first use)
-        setTimeout(async () => {
-          const cameraCount = await getCameras();
-          if (cameraCount > 1 && isMobileDevice) {
-            updateStatus(`✅ Mobile: ${cameraCount} cameras now available!`, false);
-          }
-        }, 1000);
-        
         updateStatus("Camera started. Ready to stream!", false);
-        startStreamBtn.disabled = false;
         return stream;
       } catch (err) {
         updateStatus("❌ Camera access failed: " + err.message, false);
@@ -788,7 +811,6 @@
 
     // Start screen share
     async function startScreenShare() {
-      // Check if screen share is supported
       if (!screenShareSupported) {
         throw new Error('Screen sharing is not supported on this device/browser');
       }
@@ -807,7 +829,6 @@
           }
         };
 
-        // Adjust constraints based on screen source selection
         const screenSource = screenSourceSelect.value;
         if (screenSource === 'window') {
           constraints.video = {
@@ -823,7 +844,6 @@
 
         const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
         
-        // Add audio track if available
         if (stream.getAudioTracks().length === 0) {
           const audioStream = await navigator.mediaDevices.getUserMedia({ 
             audio: {
@@ -841,13 +861,10 @@
         currentStream = stream;
         streamTypeOverlay.textContent = 'SCREEN SHARE';
         
-        // Setup audio visualization
         setupAudioVisualization(stream);
         
         updateStatus("Screen share started. Ready to stream!", false);
-        startStreamBtn.disabled = false;
 
-        // Handle when user stops screen share
         stream.getVideoTracks()[0].onended = () => {
           updateStatus("Screen share ended", false);
           stopStream();
@@ -865,13 +882,17 @@
     async function switchCamera() {
       if (cameras.length <= 1) return;
       
+      if (isStreaming) {
+        updateStatus("⚠️ Stop stream first to switch cameras", false);
+        cameraWarning.style.display = 'block';
+        return;
+      }
+      
       currentCameraIndex = (currentCameraIndex + 1) % cameras.length;
       cameraSelect.value = currentCameraIndex;
       
-      if (currentStream && currentMode === 'camera') {
-        await stopStream();
-        await startStream();
-      }
+      // Update the UI but don't auto-start stream
+      updateStatus(`✅ Switched to ${cameras[currentCameraIndex].label || 'Camera ' + (currentCameraIndex + 1)}`, false);
     }
 
     // Stop current stream
@@ -888,12 +909,16 @@
       stopStreamBtn.style.display = 'none';
       startStreamBtn.style.display = 'block';
       streamInfo.style.display = 'none';
-      updateStatus("Stream stopped. Select source to start new stream.", false);
+      isStreaming = false;
+      updateCameraWarning();
       
       // Close WebSocket connection
       if (socket) {
         socket.close();
+        socket = null;
       }
+      
+      updateStatus("Stream stopped. Select source to start new stream.", false);
     }
 
     // Start streaming to server
@@ -906,6 +931,8 @@
           stream = await startScreenShare();
         }
         
+        isStreaming = true;
+        updateCameraWarning();
         initWebSocket(stream);
         startStreamBtn.disabled = true;
         stopStreamBtn.style.display = 'block';
@@ -913,6 +940,8 @@
         
       } catch (error) {
         console.error('Failed to start stream:', error);
+        isStreaming = false;
+        updateCameraWarning();
       }
     }
 
@@ -951,7 +980,6 @@
             ]
           });
 
-          // Add ALL tracks (both video and audio) to the connection
           stream.getTracks().forEach(track => {
             console.log(`Adding track: ${track.kind} (enabled: ${track.enabled})`);
             pc.addTrack(track, stream);
@@ -1028,7 +1056,7 @@
       } else if (cameraCount === 1) {
         updateStatus('✅ 1 camera detected', false);
       } else {
-        updateStatus(`✅ ${cameraCount} cameras detected! Switch camera button available.`, false);
+        updateStatus(`✅ ${cameraCount} cameras detected!`, false);
       }
     });
 
@@ -1083,7 +1111,7 @@
     cameraSelect.addEventListener('change', () => {
       currentCameraIndex = parseInt(cameraSelect.value);
       if (currentStream && currentMode === 'camera') {
-        stopStream();
+        updateStatus("⚠️ Camera changed - stop and restart stream to apply", false);
       }
     });
 
@@ -1091,7 +1119,6 @@
     async function initialize() {
       detectDevice();
       
-      // Initial camera detection
       const cameraCount = await getCameras();
       
       if (isMobileDevice) {
