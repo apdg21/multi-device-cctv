@@ -160,15 +160,17 @@ wss.on("connection", (ws) => {
           return;
         }
 
-        console.log(`📤 Streamer ${ws.id} sending offer to ${stream.viewers.size} viewers`);
-        
-        for (const [vid, viewerWs] of stream.viewers.entries()) {
-          if (viewerWs.readyState === viewerWs.OPEN) {
-            viewerWs.send(JSON.stringify({ 
-              type: "streamer-offer", 
-              offer: data.offer 
-            }));
-            console.log(`➡️ Routed offer -> viewer ${vid}`);
+        const targetViewer = stream.viewers.get(data.viewerId);
+        if (targetViewer && targetViewer.readyState === targetViewer.OPEN) {
+          targetViewer.send(JSON.stringify({ type: "streamer-offer", offer: data.offer }));
+          console.log(`➡️ Routed offer -> viewer ${data.viewerId}`);
+        } else {
+          // Fallback: broadcast to all viewers (e.g. viewerId not provided)
+          for (const [vid, viewerWs] of stream.viewers.entries()) {
+            if (viewerWs.readyState === viewerWs.OPEN) {
+              viewerWs.send(JSON.stringify({ type: "streamer-offer", offer: data.offer }));
+              console.log(`➡️ Broadcast offer -> viewer ${vid}`);
+            }
           }
         }
         break;
@@ -178,13 +180,16 @@ wss.on("connection", (ws) => {
       case "streamer-candidate": {
         const stream = streams.get(ws.streamId);
         if (!stream) return;
-        
-        for (const [vid, viewerWs] of stream.viewers.entries()) {
-          if (viewerWs.readyState === viewerWs.OPEN) {
-            viewerWs.send(JSON.stringify({ 
-              type: "streamer-candidate", 
-              candidate: data.candidate 
-            }));
+
+        const targetViewer = stream.viewers.get(data.viewerId);
+        if (targetViewer && targetViewer.readyState === targetViewer.OPEN) {
+          targetViewer.send(JSON.stringify({ type: "streamer-candidate", candidate: data.candidate }));
+        } else {
+          // Fallback: broadcast
+          for (const [vid, viewerWs] of stream.viewers.entries()) {
+            if (viewerWs.readyState === viewerWs.OPEN) {
+              viewerWs.send(JSON.stringify({ type: "streamer-candidate", candidate: data.candidate }));
+            }
           }
         }
         break;

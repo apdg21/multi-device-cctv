@@ -561,7 +561,7 @@
     const subtitle = document.getElementById("subtitle");
 
     let socket;
-    let pc;
+    const peerConnections = new Map(); // viewerId -> RTCPeerConnection
     let currentStream;
     let connectedViewers = new Set();
     let audioContext;
@@ -897,6 +897,13 @@
 
     // Stop current stream
     function stopStream() {
+      // Close all peer connections
+      peerConnections.forEach((pc, viewerId) => {
+        pc.close();
+        console.log(`Closed peer connection for viewer ${viewerId}`);
+      });
+      peerConnections.clear();
+
       if (currentStream) {
         currentStream.getTracks().forEach(track => track.stop());
         currentStream = null;
@@ -910,6 +917,8 @@
       startStreamBtn.style.display = 'block';
       streamInfo.style.display = 'none';
       isStreaming = false;
+      connectedViewers.clear();
+      updateViewersDisplay();
       updateCameraWarning();
       
       // Close WebSocket connection
@@ -947,7 +956,8 @@
 
     // Initialize WebSocket signaling
     function initWebSocket(stream) {
-      socket = new WebSocket(window.location.origin.replace(/^http/, "ws"));
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(`${wsProtocol}//${window.location.host}`);
 
       socket.onopen = () => {
         updateStatus("Connected to server. Starting stream...", true);
@@ -965,66 +975,85 @@
           updateStatus("✅ Stream is live! Share the link below.", true);
         }
 
-        // Viewer connected — create offer
+        // Viewer connected — create a dedicated RTCPeerConnection per viewer
         else if (msg.type === "viewer-joined") {
           const viewerId = msg.viewerId;
           connectedViewers.add(viewerId);
           updateViewersDisplay();
-          
+
           console.log(`🔄 Creating offer for viewer: ${viewerId}`);
-          
-          pc = new RTCPeerConnection({
+
+          // Clean up any stale connection for this viewer
+          if (peerConnections.has(viewerId)) {
+            peerConnections.get(viewerId).close();
+          }
+
+          const viewerPc = new RTCPeerConnection({
             iceServers: [
               { urls: 'stun:stun.l.google.com:19302' },
               { urls: 'stun:global.stun.twilio.com:3478' }
             ]
           });
+          peerConnections.set(viewerId, viewerPc);
 
           stream.getTracks().forEach(track => {
             console.log(`Adding track: ${track.kind} (enabled: ${track.enabled})`);
-            pc.addTrack(track, stream);
+            viewerPc.addTrack(track, stream);
           });
 
-          pc.oniceconnectionstatechange = () => {
-            console.log('ICE connection state:', pc.iceConnectionState);
+          viewerPc.oniceconnectionstatechange = () => {
+            console.log(`ICE state for viewer ${viewerId}:`, viewerPc.iceConnectionState);
+            if (viewerPc.iceConnectionState === 'failed' || viewerPc.iceConnectionState === 'disconnected') {
+              peerConnections.delete(viewerId);
+              viewerPc.close();
+            }
           };
 
-          pc.onicecandidate = (e) => {
+          viewerPc.onicecandidate = (e) => {
             if (e.candidate) {
-              socket.send(JSON.stringify({ 
-                type: "streamer-candidate", 
-                candidate: e.candidate 
+              socket.send(JSON.stringify({
+                type: "streamer-candidate",
+                candidate: e.candidate,
+                viewerId   // server routes back to the right viewer
               }));
             }
           };
 
           try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            socket.send(JSON.stringify({ 
-              type: "streamer-offer", 
-              offer: offer 
+            const offer = await viewerPc.createOffer();
+            await viewerPc.setLocalDescription(offer);
+            socket.send(JSON.stringify({
+              type: "streamer-offer",
+              offer: offer,
+              viewerId
             }));
-            console.log('✅ Offer created and sent to viewer');
+            console.log(`✅ Offer sent to viewer ${viewerId}`);
           } catch (error) {
             console.error('Error creating offer:', error);
           }
         }
 
-        // Viewer answer received
+        // Viewer answer received — apply to the right peer connection
         else if (msg.type === "viewer-answer") {
+          const viewerPc = peerConnections.get(msg.viewerId);
+          if (!viewerPc) {
+            console.warn(`No peer connection found for viewer ${msg.viewerId}`);
+            return;
+          }
           try {
-            await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
-            console.log('✅ Remote description set from viewer answer');
+            await viewerPc.setRemoteDescription(new RTCSessionDescription(msg.answer));
+            console.log(`✅ Remote description set for viewer ${msg.viewerId}`);
           } catch (e) {
             console.warn("Set remote desc error:", e);
           }
         }
 
-        // Viewer ICE candidate received
+        // Viewer ICE candidate — apply to the right peer connection
         else if (msg.type === "viewer-candidate") {
+          const viewerPc = peerConnections.get(msg.viewerId);
+          if (!viewerPc) return;
           try {
-            await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            await viewerPc.addIceCandidate(new RTCIceCandidate(msg.candidate));
           } catch (e) {
             console.warn("Add ICE candidate error:", e);
           }

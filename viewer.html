@@ -298,6 +298,7 @@
     let socket;
     let pc;
     let streamId;
+    let pendingCandidates = []; // queue ICE candidates that arrive before setRemoteDescription
 
     // Update status display
     function updateStatus(message, state = 'connecting') {
@@ -355,8 +356,9 @@
       streamIdElement.textContent = streamId;
       connectionInfo.style.display = 'block';
 
-      // Create WebSocket connection
-      socket = new WebSocket(window.location.origin.replace(/^http/, "ws"));
+      // Create WebSocket connection — use wss when page is served over https
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(`${wsProtocol}//${window.location.host}`);
 
       socket.onopen = () => {
         updateStatus('Connected to server. Waiting for stream...', 'connected');
@@ -431,9 +433,15 @@
               }
             };
 
-            // Set remote description and create answer
+            // Set remote description, then flush any queued ICE candidates
             await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
             console.log('✅ Remote description set');
+
+            // Flush candidates that arrived before the offer
+            for (const c of pendingCandidates) {
+              try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (e) { /* ignore */ }
+            }
+            pendingCandidates = [];
 
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
@@ -450,14 +458,19 @@
           }
         }
 
-        // Add incoming ICE candidates
+        // Add incoming ICE candidates — queue them if pc isn't ready yet
         else if (msg.type === "streamer-candidate") {
-          if (pc && msg.candidate) {
+          if (!msg.candidate) return;
+          if (pc && pc.remoteDescription) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
             } catch (e) {
               console.warn("Add ICE candidate error:", e);
             }
+          } else {
+            // Offer not yet processed — queue for later
+            pendingCandidates.push(msg.candidate);
+            console.log(`Queued ICE candidate (total queued: ${pendingCandidates.length})`);
           }
         }
       };
@@ -479,7 +492,9 @@
       }
       if (pc) {
         pc.close();
+        pc = null;
       }
+      pendingCandidates = [];
       video.style.display = 'none';
       videoPlaceholder.style.display = 'block';
       video.srcObject = null;
