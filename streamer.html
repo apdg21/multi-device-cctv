@@ -639,60 +639,82 @@
     // Get available cameras
     async function getCameras() {
       try {
-        // If we're streaming, we can't properly enumerate cameras
         if (isStreaming) {
-          console.log("⚠️ Cannot refresh cameras while streaming - camera is in use");
           updateStatus("⚠️ Stop stream to refresh cameras", false);
           return cameras.length;
         }
 
         updateStatus("🔍 Detecting cameras...", false);
-        
-        // Stop any existing stream before enumerating
+
         if (currentStream) {
           currentStream.getTracks().forEach(track => track.stop());
           currentStream = null;
           video.srcObject = null;
         }
 
-        // First, request camera permission to ensure devices are available
+        // Request minimal permission to unlock device labels — use facingMode
+        // instead of fixed resolution which can fail on mobile
         try {
           const tempStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: 1280, height: 720 },
+            video: isMobileDevice ? { facingMode: 'environment' } : true,
             audio: false 
           });
-          // Immediately stop the temporary stream
           tempStream.getTracks().forEach(track => track.stop());
-          console.log("✅ Camera permission granted");
         } catch (error) {
           console.warn('Camera permission not granted yet:', error);
         }
 
-        // Now enumerate devices
         const devices = await navigator.mediaDevices.enumerateDevices();
         cameras = devices.filter(device => device.kind === 'videoinput');
-        
-        cameraSelect.innerHTML = '<option value="">Select Camera...</option>';
-        cameras.forEach((camera, index) => {
-          const option = document.createElement('option');
-          option.value = index;
-          option.textContent = camera.label || `Camera ${index + 1}`;
-          cameraSelect.appendChild(option);
-        });
-        
+
+        cameraSelect.innerHTML = '';
+
+        if (isMobileDevice) {
+          // On mobile, show simple Front / Back options using facingMode
+          // Actual deviceId enumeration is unreliable — use facingMode instead
+          const mobileOptions = [
+            { label: '📷 Back Camera', facingMode: 'environment' },
+            { label: '🤳 Front Camera', facingMode: 'user' }
+          ];
+          // Verify each option actually works before adding it
+          const verified = [];
+          for (const opt of mobileOptions) {
+            try {
+              const t = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: opt.facingMode } }, audio: false });
+              t.getTracks().forEach(tr => tr.stop());
+              verified.push(opt);
+            } catch {
+              // Camera not available (e.g. only one camera on device)
+            }
+          }
+          cameras = verified.length > 0 ? verified : [{ label: '📷 Camera', facingMode: 'environment' }];
+          cameras.forEach((cam, index) => {
+            const option = document.createElement('option');
+            option.value = index;
+            option.textContent = cam.label;
+            cameraSelect.appendChild(option);
+          });
+        } else {
+          // Desktop: use device enumeration as before
+          cameras.forEach((camera, index) => {
+            const option = document.createElement('option');
+            option.value = index;
+            option.textContent = camera.label || `Camera ${index + 1}`;
+            cameraSelect.appendChild(option);
+          });
+        }
+
         if (cameras.length > 0) {
           cameraSelect.value = 0;
           currentCameraIndex = 0;
         }
 
-        // Update switch camera button visibility
         switchCameraBtn.style.display = cameras.length > 1 ? 'block' : 'none';
         updateCameraWarning();
-        
-        console.log(`📷 Found ${cameras.length} cameras:`, cameras.map(cam => cam.label || 'Unknown'));
-        
+
+        console.log(`📷 Found ${cameras.length} cameras`);
         return cameras.length;
-        
+
       } catch (error) {
         console.error('Error getting cameras:', error);
         cameras = [];
@@ -769,8 +791,17 @@
           break;
       }
 
-      if (cameras.length > 0 && cameraSelect.value !== "") {
-        constraints.deviceId = { exact: cameras[cameraSelect.value].deviceId };
+      if (isMobileDevice) {
+        // On mobile, use facingMode — deviceId is unreliable
+        const cam = cameras[currentCameraIndex];
+        if (cam && cam.facingMode) {
+          constraints.facingMode = { ideal: cam.facingMode };
+        }
+      } else if (cameras.length > 0 && cameraSelect.value !== "") {
+        const cam = cameras[cameraSelect.value];
+        if (cam && cam.deviceId) {
+          constraints.deviceId = { exact: cam.deviceId };
+        }
       }
 
       return constraints;

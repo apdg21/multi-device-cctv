@@ -273,8 +273,9 @@
     </div>
     
     <div class="controls">
-      <button id="reconnectBtn">Reconnect</button>
-      <button id="fullscreenBtn">Fullscreen</button>
+      <button id="reconnectBtn">🔄 Reconnect</button>
+      <button id="fullscreenBtn">⛶ Fullscreen</button>
+      <button id="leaveBtn" style="background: linear-gradient(135deg, #ff4444, #ff6b6b);">🚪 Leave Stream</button>
     </div>
   </div>
 
@@ -510,6 +511,21 @@
       } else if (video.mozRequestFullScreen) {
         video.mozRequestFullScreen();
       }
+    });
+
+    const leaveBtn = document.getElementById('leaveBtn');
+
+    // Leave stream button
+    leaveBtn.addEventListener('click', () => {
+      if (socket) socket.close();
+      if (pc) { pc.close(); pc = null; }
+      pendingCandidates = [];
+      video.srcObject = null;
+      video.style.display = 'none';
+      videoPlaceholder.style.display = 'block';
+      updateStatus('You left the stream.', 'connecting');
+      // Navigate back to home
+      window.location.href = '/';
     });
 
     // Start the connection
