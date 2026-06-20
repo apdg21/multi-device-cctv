@@ -894,63 +894,47 @@
 
         updateStatus("🔍 Detecting cameras...", false);
 
+        // Stop any preview stream before enumerating
         if (currentStream) {
           currentStream.getTracks().forEach(track => track.stop());
           currentStream = null;
           video.srcObject = null;
         }
 
-        // Request minimal permission to unlock device labels — use facingMode
-        // instead of fixed resolution which can fail on mobile
+        // Request permission with the simplest possible constraint
         try {
-          const tempStream = await navigator.mediaDevices.getUserMedia({ 
-            video: isMobileDevice ? { facingMode: 'environment' } : true,
-            audio: false 
-          });
+          const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
           tempStream.getTracks().forEach(track => track.stop());
         } catch (error) {
-          console.warn('Camera permission not granted yet:', error);
+          console.warn('Camera permission denied:', error);
         }
 
         const devices = await navigator.mediaDevices.enumerateDevices();
-        cameras = devices.filter(device => device.kind === 'videoinput');
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
         cameraSelect.innerHTML = '';
 
         if (isMobileDevice) {
-          // On mobile, show simple Front / Back options using facingMode
-          // Actual deviceId enumeration is unreliable — use facingMode instead
-          const mobileOptions = [
-            { label: '📷 Back Camera', facingMode: 'environment' },
-            { label: '🤳 Front Camera', facingMode: 'user' }
-          ];
-          // Verify each option actually works before adding it
-          const verified = [];
-          for (const opt of mobileOptions) {
-            try {
-              const t = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: opt.facingMode } }, audio: false });
-              t.getTracks().forEach(tr => tr.stop());
-              verified.push(opt);
-            } catch {
-              // Camera not available (e.g. only one camera on device)
-            }
+          // On mobile use facingMode labels — don't probe open/close each camera
+          // (that can lock up the camera driver and cause black frames)
+          if (videoDevices.length >= 2) {
+            cameras = [
+              { label: '📷 Back Camera',  facingMode: 'environment' },
+              { label: '🤳 Front Camera', facingMode: 'user' },
+            ];
+          } else {
+            cameras = [{ label: '📷 Camera', facingMode: 'environment' }];
           }
-          cameras = verified.length > 0 ? verified : [{ label: '📷 Camera', facingMode: 'environment' }];
-          cameras.forEach((cam, index) => {
-            const option = document.createElement('option');
-            option.value = index;
-            option.textContent = cam.label;
-            cameraSelect.appendChild(option);
-          });
         } else {
-          // Desktop: use device enumeration as before
-          cameras.forEach((camera, index) => {
-            const option = document.createElement('option');
-            option.value = index;
-            option.textContent = camera.label || `Camera ${index + 1}`;
-            cameraSelect.appendChild(option);
-          });
+          cameras = videoDevices;
         }
+
+        cameras.forEach((cam, index) => {
+          const option = document.createElement('option');
+          option.value = index;
+          option.textContent = cam.label || `Camera ${index + 1}`;
+          cameraSelect.appendChild(option);
+        });
 
         if (cameras.length > 0) {
           cameraSelect.value = 0;
@@ -960,7 +944,7 @@
         switchCameraBtn.style.display = cameras.length > 1 ? 'block' : 'none';
         updateCameraWarning();
 
-        console.log(`📷 Found ${cameras.length} cameras`);
+        console.log(`📷 Found ${cameras.length} camera(s)`);
         return cameras.length;
 
       } catch (error) {
@@ -1040,13 +1024,13 @@
       }
 
       if (isMobileDevice) {
-        // On mobile, use facingMode — deviceId is unreliable
+        // Use ideal (never exact) so it never hard-fails on devices with one camera
         const cam = cameras[currentCameraIndex];
         if (cam && cam.facingMode) {
           constraints.facingMode = { ideal: cam.facingMode };
         }
       } else if (cameras.length > 0 && cameraSelect.value !== "") {
-        const cam = cameras[cameraSelect.value];
+        const cam = cameras[parseInt(cameraSelect.value)];
         if (cam && cam.deviceId) {
           constraints.deviceId = { exact: cam.deviceId };
         }
@@ -1059,25 +1043,34 @@
     async function startCameraStream() {
       try {
         updateStatus("Starting camera...", false);
+
+        // If audio is disabled, don't request it
+        const audioEnabled = audioToggle.checked;
         
         const stream = await navigator.mediaDevices.getUserMedia({ 
           video: getVideoConstraints(),
-          audio: {
+          audio: audioEnabled ? {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
             channelCount: 1,
             sampleRate: 44100,
             sampleSize: 16
-          }
+          } : false
         });
-        
+
+        // Brief pause — lets the camera sensor warm up before we attach it.
+        // Skipping this is the #1 cause of black frames on Android/iOS.
+        await new Promise(resolve => setTimeout(resolve, 300));
+
         video.srcObject = stream;
         currentStream = stream;
         streamTypeOverlay.textContent = 'CAMERA';
+
+        // Explicitly call play() — autoplay can be blocked silently on mobile
+        try { await video.play(); } catch (e) { console.warn('video.play():', e); }
         
-        // Setup audio visualization
-        setupAudioVisualization(stream);
+        if (audioEnabled) setupAudioVisualization(stream);
         
         updateStatus("Camera started. Ready to stream!", false);
         return stream;
