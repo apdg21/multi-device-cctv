@@ -398,95 +398,7 @@
       text-align: center;
       display: none;
     }
-
-    .recording-controls {
-      background: rgba(255, 255, 255, 0.05);
-      border-radius: 15px;
-      padding: 1.2rem 1.5rem;
-      margin: 1rem 0;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      flex-wrap: wrap;
-      justify-content: center;
-    }
-
-    .rec-dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      background: #ff4444;
-      display: none;
-      animation: pulse 1s infinite;
-    }
-
-    .rec-dot.active {
-      display: inline-block;
-    }
-
-    .rec-timer {
-      font-family: monospace;
-      font-size: 1.1rem;
-      color: #ff4444;
-      min-width: 60px;
-    }
-
-    .btn-record {
-      background: linear-gradient(135deg, #ff4444, #cc0000);
-    }
-
-    .btn-record-stop {
-      background: linear-gradient(135deg, #888, #555);
-    }
-
-    .recordings-list {
-      background: rgba(255, 255, 255, 0.05);
-      border-radius: 15px;
-      padding: 1.5rem;
-      margin-top: 1rem;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      display: none;
-    }
-
-    .recordings-list h3 {
-      margin-bottom: 1rem;
-      color: var(--secondary);
-    }
-
-    .recording-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: rgba(255, 255, 255, 0.05);
-      border-radius: 10px;
-      padding: 0.8rem 1rem;
-      margin-bottom: 0.5rem;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-    }
-
-    .recording-item-info {
-      font-size: 0.9rem;
-      color: #ccc;
-    }
-
-    .recording-item-actions {
-      display: flex;
-      gap: 0.5rem;
-    }
-
-    .btn-download {
-      background: linear-gradient(135deg, var(--primary), var(--secondary));
-      padding: 0.4rem 1rem;
-      font-size: 0.85rem;
-    }
-
-    .btn-delete-rec {
-      background: linear-gradient(135deg, #ff4444, #ff6b6b);
-      padding: 0.4rem 1rem;
-      font-size: 0.85rem;
-    }
+  </style>
 </head>
 <body>
   <div class="container">
@@ -599,21 +511,6 @@
       </div>
     </div>
     
-    <!-- Recording Controls -->
-    <div class="recording-controls" id="recordingControls">
-      <span class="rec-dot" id="recDot"></span>
-      <span class="rec-timer" id="recTimer" style="display:none;">00:00</span>
-      <button id="startRecordBtn" class="btn-record" disabled>⏺ Record</button>
-      <button id="stopRecordBtn" class="btn-record-stop" style="display:none;">⏹ Stop Recording</button>
-      <span id="recordingStatus" style="color:#aaa; font-size:0.9rem;">Start a stream to enable recording</span>
-    </div>
-
-    <!-- Saved Recordings -->
-    <div class="recordings-list" id="recordingsList">
-      <h3>🎬 Saved Recordings</h3>
-      <div id="recordingsContainer"></div>
-    </div>
-
     <div class="video-container">
       <div class="video-overlay" id="streamTypeOverlay">CAMERA</div>
       <video id="video" autoplay playsinline muted></video>
@@ -677,151 +574,6 @@
     let isMobileDevice = false;
     let screenShareSupported = true;
     let isStreaming = false;
-
-    // Recording state
-    let mediaRecorder = null;
-    let recordingChunks = [];
-    let recordings = []; // { blob, name, duration, size }
-    let recTimerInterval = null;
-    let recStartTime = null;
-
-    const startRecordBtn = document.getElementById('startRecordBtn');
-    const stopRecordBtn  = document.getElementById('stopRecordBtn');
-    const recDot         = document.getElementById('recDot');
-    const recTimer       = document.getElementById('recTimer');
-    const recordingStatus = document.getElementById('recordingStatus');
-    const recordingsList  = document.getElementById('recordingsList');
-    const recordingsContainer = document.getElementById('recordingsContainer');
-
-    // ─── Recording ───────────────────────────────────────────────
-
-    function getBestMimeType() {
-      const types = [
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp8,opus',
-        'video/webm',
-        'video/mp4',
-      ];
-      return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
-    }
-
-    function formatDuration(ms) {
-      const s = Math.floor(ms / 1000);
-      const m = Math.floor(s / 60);
-      return `${String(m).padStart(2,'0')}:${String(s % 60).padStart(2,'0')}`;
-    }
-
-    function formatBytes(bytes) {
-      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    }
-
-    function startRecording() {
-      if (!currentStream || mediaRecorder) return;
-
-      const mimeType = getBestMimeType();
-      try {
-        mediaRecorder = new MediaRecorder(currentStream, mimeType ? { mimeType } : {});
-      } catch (e) {
-        console.error('MediaRecorder failed:', e);
-        recordingStatus.textContent = '❌ Recording not supported on this browser';
-        return;
-      }
-
-      recordingChunks = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) recordingChunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(recordingChunks, { type: mediaRecorder.mimeType || 'video/webm' });
-        const duration = Date.now() - recStartTime;
-        const ext = (mediaRecorder.mimeType || 'video/webm').includes('mp4') ? 'mp4' : 'webm';
-        const name = `recording_${new Date().toISOString().replace(/[:.]/g,'-').slice(0,19)}.${ext}`;
-        recordings.push({ blob, name, duration, size: blob.size });
-        renderRecordingsList();
-        recordingChunks = [];
-      };
-
-      mediaRecorder.start(1000); // collect a chunk every second
-      recStartTime = Date.now();
-
-      // Timer
-      recTimer.style.display = 'inline';
-      recTimer.textContent = '00:00';
-      recTimerInterval = setInterval(() => {
-        recTimer.textContent = formatDuration(Date.now() - recStartTime);
-      }, 1000);
-
-      recDot.classList.add('active');
-      startRecordBtn.style.display = 'none';
-      stopRecordBtn.style.display  = 'inline-block';
-      recordingStatus.textContent  = '⏺ Recording...';
-    }
-
-    function stopRecording() {
-      if (!mediaRecorder) return;
-      mediaRecorder.stop();
-      mediaRecorder = null;
-      clearInterval(recTimerInterval);
-      recDot.classList.remove('active');
-      recTimer.style.display = 'none';
-      startRecordBtn.style.display = 'inline-block';
-      stopRecordBtn.style.display  = 'none';
-      recordingStatus.textContent  = '✅ Recording saved — see below';
-    }
-
-    function renderRecordingsList() {
-      if (recordings.length === 0) {
-        recordingsList.style.display = 'none';
-        return;
-      }
-      recordingsList.style.display = 'block';
-      recordingsContainer.innerHTML = '';
-      recordings.forEach((rec, i) => {
-        const item = document.createElement('div');
-        item.className = 'recording-item';
-        item.innerHTML = `
-          <div class="recording-item-info">
-            🎬 ${rec.name}<br>
-            <small>${formatDuration(rec.duration)} &nbsp;·&nbsp; ${formatBytes(rec.size)}</small>
-          </div>
-          <div class="recording-item-actions">
-            <button class="btn-download" data-index="${i}">⬇ Download</button>
-            <button class="btn-delete-rec" data-index="${i}">🗑 Delete</button>
-          </div>
-        `;
-        recordingsContainer.appendChild(item);
-      });
-    }
-
-    // Event delegation for dynamic recording items
-    recordingsContainer.addEventListener('click', (e) => {
-      const idx = parseInt(e.target.dataset.index);
-      if (isNaN(idx)) return;
-
-      if (e.target.classList.contains('btn-download')) {
-        const rec = recordings[idx];
-        const url = URL.createObjectURL(rec.blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = rec.name;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
-      }
-
-      if (e.target.classList.contains('btn-delete-rec')) {
-        URL.revokeObjectURL(recordings[idx]?.url);
-        recordings.splice(idx, 1);
-        renderRecordingsList();
-      }
-    });
-
-    startRecordBtn.addEventListener('click', startRecording);
-    stopRecordBtn.addEventListener('click', stopRecording);
-
-    // ─────────────────────────────────────────────────────────────
 
     // Detect device type and capabilities
     function detectDevice() {
@@ -894,47 +646,63 @@
 
         updateStatus("🔍 Detecting cameras...", false);
 
-        // Stop any preview stream before enumerating
         if (currentStream) {
           currentStream.getTracks().forEach(track => track.stop());
           currentStream = null;
           video.srcObject = null;
         }
 
-        // Request permission with the simplest possible constraint
+        // Request minimal permission to unlock device labels — use facingMode
+        // instead of fixed resolution which can fail on mobile
         try {
-          const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          const tempStream = await navigator.mediaDevices.getUserMedia({ 
+            video: isMobileDevice ? { facingMode: 'environment' } : true,
+            audio: false 
+          });
           tempStream.getTracks().forEach(track => track.stop());
         } catch (error) {
-          console.warn('Camera permission denied:', error);
+          console.warn('Camera permission not granted yet:', error);
         }
 
         const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        cameras = devices.filter(device => device.kind === 'videoinput');
 
         cameraSelect.innerHTML = '';
 
         if (isMobileDevice) {
-          // On mobile use facingMode labels — don't probe open/close each camera
-          // (that can lock up the camera driver and cause black frames)
-          if (videoDevices.length >= 2) {
-            cameras = [
-              { label: '📷 Back Camera',  facingMode: 'environment' },
-              { label: '🤳 Front Camera', facingMode: 'user' },
-            ];
-          } else {
-            cameras = [{ label: '📷 Camera', facingMode: 'environment' }];
+          // On mobile, show simple Front / Back options using facingMode
+          // Actual deviceId enumeration is unreliable — use facingMode instead
+          const mobileOptions = [
+            { label: '📷 Back Camera', facingMode: 'environment' },
+            { label: '🤳 Front Camera', facingMode: 'user' }
+          ];
+          // Verify each option actually works before adding it
+          const verified = [];
+          for (const opt of mobileOptions) {
+            try {
+              const t = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: opt.facingMode } }, audio: false });
+              t.getTracks().forEach(tr => tr.stop());
+              verified.push(opt);
+            } catch {
+              // Camera not available (e.g. only one camera on device)
+            }
           }
+          cameras = verified.length > 0 ? verified : [{ label: '📷 Camera', facingMode: 'environment' }];
+          cameras.forEach((cam, index) => {
+            const option = document.createElement('option');
+            option.value = index;
+            option.textContent = cam.label;
+            cameraSelect.appendChild(option);
+          });
         } else {
-          cameras = videoDevices;
+          // Desktop: use device enumeration as before
+          cameras.forEach((camera, index) => {
+            const option = document.createElement('option');
+            option.value = index;
+            option.textContent = camera.label || `Camera ${index + 1}`;
+            cameraSelect.appendChild(option);
+          });
         }
-
-        cameras.forEach((cam, index) => {
-          const option = document.createElement('option');
-          option.value = index;
-          option.textContent = cam.label || `Camera ${index + 1}`;
-          cameraSelect.appendChild(option);
-        });
 
         if (cameras.length > 0) {
           cameraSelect.value = 0;
@@ -944,7 +712,7 @@
         switchCameraBtn.style.display = cameras.length > 1 ? 'block' : 'none';
         updateCameraWarning();
 
-        console.log(`📷 Found ${cameras.length} camera(s)`);
+        console.log(`📷 Found ${cameras.length} cameras`);
         return cameras.length;
 
       } catch (error) {
@@ -1024,13 +792,13 @@
       }
 
       if (isMobileDevice) {
-        // Use ideal (never exact) so it never hard-fails on devices with one camera
+        // On mobile, use facingMode — deviceId is unreliable
         const cam = cameras[currentCameraIndex];
         if (cam && cam.facingMode) {
           constraints.facingMode = { ideal: cam.facingMode };
         }
       } else if (cameras.length > 0 && cameraSelect.value !== "") {
-        const cam = cameras[parseInt(cameraSelect.value)];
+        const cam = cameras[cameraSelect.value];
         if (cam && cam.deviceId) {
           constraints.deviceId = { exact: cam.deviceId };
         }
@@ -1043,34 +811,25 @@
     async function startCameraStream() {
       try {
         updateStatus("Starting camera...", false);
-
-        // If audio is disabled, don't request it
-        const audioEnabled = audioToggle.checked;
         
         const stream = await navigator.mediaDevices.getUserMedia({ 
           video: getVideoConstraints(),
-          audio: audioEnabled ? {
+          audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
             channelCount: 1,
             sampleRate: 44100,
             sampleSize: 16
-          } : false
+          }
         });
-
-        // Brief pause — lets the camera sensor warm up before we attach it.
-        // Skipping this is the #1 cause of black frames on Android/iOS.
-        await new Promise(resolve => setTimeout(resolve, 300));
-
+        
         video.srcObject = stream;
         currentStream = stream;
         streamTypeOverlay.textContent = 'CAMERA';
-
-        // Explicitly call play() — autoplay can be blocked silently on mobile
-        try { await video.play(); } catch (e) { console.warn('video.play():', e); }
         
-        if (audioEnabled) setupAudioVisualization(stream);
+        // Setup audio visualization
+        setupAudioVisualization(stream);
         
         updateStatus("Camera started. Ready to stream!", false);
         return stream;
@@ -1180,15 +939,9 @@
         currentStream.getTracks().forEach(track => track.stop());
         currentStream = null;
       }
-
       if (audioContext) {
-        audioContext.close().catch(() => {});
-        audioContext = null;  // ← must null it so next stream gets a fresh one
-        analyser = null;
-        microphone = null;
-        javascriptNode = null;
+        audioContext.close();
       }
-
       video.srcObject = null;
       startStreamBtn.disabled = false;
       stopStreamBtn.style.display = 'none';
@@ -1198,23 +951,11 @@
       connectedViewers.clear();
       updateViewersDisplay();
       updateCameraWarning();
-
-      // Stop recording if active, then disable
-      if (mediaRecorder) stopRecording();
-      startRecordBtn.disabled = true;
-      stopRecordBtn.style.display = 'none';
-      recordingStatus.textContent = 'Start a stream to enable recording';
       
-      // Close WebSocket — send explicit leave first so server cleans up before the close event fires
+      // Close WebSocket connection
       if (socket) {
-        const oldSocket = socket;
+        socket.close();
         socket = null;
-        try {
-          if (oldSocket.readyState === WebSocket.OPEN) {
-            oldSocket.send(JSON.stringify({ type: "streamer-leave" }));
-          }
-        } catch (e) { /* ignore */ }
-        oldSocket.close();
       }
       
       updateStatus("Stream stopped. Select source to start new stream.", false);
@@ -1222,13 +963,6 @@
 
     // Start streaming to server
     async function startStream() {
-      // Guard: if already streaming or socket still open from a previous session, clean up first
-      if (isStreaming || socket) {
-        stopStream();
-        // Give the browser a tick to fire the close event before reconnecting
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-
       try {
         let stream;
         if (currentMode === 'camera') {
@@ -1243,16 +977,11 @@
         startStreamBtn.disabled = true;
         stopStreamBtn.style.display = 'block';
         startStreamBtn.style.display = 'none';
-
-        // Enable recording
-        startRecordBtn.disabled = false;
-        recordingStatus.textContent = 'Ready to record';
         
       } catch (error) {
         console.error('Failed to start stream:', error);
         isStreaming = false;
         updateCameraWarning();
-        startStreamBtn.disabled = false;
       }
     }
 
