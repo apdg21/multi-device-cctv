@@ -1362,7 +1362,7 @@
     async function switchCamera() {
       if (cameras.length <= 1) return;
 
-      // Desktop while streaming: still require stop first
+      // Desktop while streaming: require stop first
       if (isStreaming && !isMobileDevice) {
         updateStatus("⚠️ Stop stream first to switch cameras", false);
         cameraWarning.style.display = 'block';
@@ -1370,83 +1370,103 @@
       }
 
       const nextIndex = (currentCameraIndex + 1) % cameras.length;
-      const nextCam  = cameras[nextIndex];
+      const nextCam   = cameras[nextIndex];
 
-      // Mobile live-swap via replaceTrack
-      if (isStreaming && isMobileDevice) {
-        switchCameraBtn.disabled = true;
-        switchCameraBtn.textContent = '🔄 Switching...';
-        updateStatus("🔄 Switching camera...", true);
-
-        try {
-          // Build constraints for the new facing mode
-          const newConstraints = {
-            video: { facingMode: { ideal: nextCam.facingMode }, frameRate: { ideal: 30 } },
-            audio: false   // keep existing audio track untouched
-          };
-
-          const newStream = await navigator.mediaDevices.getUserMedia(newConstraints);
-          const newVideoTrack = newStream.getVideoTracks()[0];
-
-          // Replace track in every active peer connection (no renegotiation needed)
-          const replacePromises = [];
-          peerConnections.forEach((pc) => {
-            const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (sender) replacePromises.push(sender.replaceTrack(newVideoTrack));
-          });
-          await Promise.all(replacePromises);
-
-          // Stop the old video track and swap into the local preview
-          if (currentStream) {
-            currentStream.getVideoTracks().forEach(t => t.stop());
-            // Remove old video tracks, add new one
-            currentStream.getVideoTracks().forEach(t => currentStream.removeTrack(t));
-            currentStream.addTrack(newVideoTrack);
-          }
-
-          // If recording, replace track in MediaRecorder by restarting it
-          // MediaRecorder can't hot-swap tracks, so we save chunks so far and restart
-          if (isRecording && mediaRecorder && mediaRecorder.state !== 'inactive') {
-            // Request final chunk flush, then restart with new stream after onstop fires
-            mediaRecorder._switchPending = true;
-            mediaRecorder.stop(); // onstop → finaliseRecording, then we restart below
-            // Wait a tick for onstop to fire
-            await new Promise(r => setTimeout(r, 200));
-            // Start fresh recording segment on the updated currentStream
-            const mimeType = getBestMimeType(recordFormatSelect.value);
-            const bitrate  = getBitrate(recordQualitySelect.value);
-            const options  = { videoBitsPerSecond: bitrate };
-            if (mimeType) options.mimeType = mimeType;
-            try { mediaRecorder = new MediaRecorder(currentStream, options); }
-            catch { mediaRecorder = new MediaRecorder(currentStream); }
-            recordedChunks = [];
-            mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
-            mediaRecorder.onstop = () => { if (!mediaRecorder._switchPending) finaliseRecording(mediaRecorder.mimeType || mimeType || 'video/webm'); };
-            mediaRecorder.start(1000);
-          }
-
-          // Update preview element
-          video.srcObject = null;
-          video.srcObject = currentStream;
-
-          currentCameraIndex = nextIndex;
-          cameraSelect.value = currentCameraIndex;
-
-          updateStatus(`✅ Switched to ${nextCam.label}`, true);
-        } catch (err) {
-          console.error('Camera switch failed:', err);
-          updateStatus('❌ Camera switch failed: ' + err.message, true);
-        } finally {
-          switchCameraBtn.disabled = false;
-          switchCameraBtn.textContent = '🔄 Switch Camera';
-        }
+      // ── Not streaming: just update the index, stream will pick it up on start ──
+      if (!isStreaming) {
+        currentCameraIndex = nextIndex;
+        cameraSelect.value = currentCameraIndex;
+        updateStatus(`✅ Camera set to ${nextCam.label || 'Camera ' + (nextIndex + 1)}`, false);
         return;
       }
 
-      // Not streaming — just update index for next stream start
-      currentCameraIndex = nextIndex;
-      cameraSelect.value = currentCameraIndex;
-      updateStatus(`✅ Switched to ${nextCam.label || 'Camera ' + (nextIndex + 1)}`, false);
+      // ── Mobile live-swap ────────────────────────────────────────────────────────
+      switchCameraBtn.disabled = true;
+      switchCameraBtn.textContent = '🔄 Switching...';
+      updateStatus("🔄 Switching camera...", true);
+
+      try {
+        // 1. Get the new camera stream — try exact first, fall back to ideal
+        let newStream;
+        try {
+          newStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { exact: nextCam.facingMode } },
+            audio: false
+          });
+        } catch (exactErr) {
+          console.warn('exact facingMode failed, trying ideal:', exactErr);
+          newStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: nextCam.facingMode },
+            audio: false
+          });
+        }
+
+        const newVideoTrack = newStream.getVideoTracks()[0];
+        if (!newVideoTrack) throw new Error('No video track in new stream');
+
+        // 2. Stop the OLD video track(s) now (before removing from stream)
+        const oldVideoTracks = currentStream.getVideoTracks();
+        oldVideoTracks.forEach(t => t.stop());
+
+        // 3. Swap tracks on currentStream so MediaRecorder & srcObject stay valid
+        oldVideoTracks.forEach(t => currentStream.removeTrack(t));
+        currentStream.addTrack(newVideoTrack);
+
+        // 4. Replace track on all active peer connections (no reconnect needed)
+        const replacePromises = [];
+        peerConnections.forEach((pc) => {
+          const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+          if (sender) replacePromises.push(sender.replaceTrack(newVideoTrack));
+        });
+        await Promise.all(replacePromises);
+
+        // 5. Refresh the local preview — must reassign srcObject to force repaint
+        video.srcObject = null;
+        video.srcObject = currentStream;
+        await video.play().catch(() => {});
+
+        // 6. If recording: MediaRecorder can't swap tracks mid-flight.
+        //    Stop it (saves current chunk), then restart on the updated stream.
+        if (isRecording && mediaRecorder && mediaRecorder.state !== 'inactive') {
+          const savedMime    = mediaRecorder.mimeType;
+          const savedBitrate = getBitrate(recordQualitySelect.value);
+
+          await new Promise(resolve => {
+            const originalOnStop = mediaRecorder.onstop;
+            mediaRecorder.onstop = (e) => {
+              if (originalOnStop) originalOnStop(e);
+              resolve();
+            };
+            mediaRecorder.stop();
+          });
+
+          // Small gap to let browser flush
+          await new Promise(r => setTimeout(r, 150));
+
+          const newOptions = { videoBitsPerSecond: savedBitrate };
+          if (savedMime) newOptions.mimeType = savedMime;
+
+          try { mediaRecorder = new MediaRecorder(currentStream, newOptions); }
+          catch { mediaRecorder = new MediaRecorder(currentStream); }
+
+          recordedChunks = [];
+          mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+          mediaRecorder.onstop = () => finaliseRecording(mediaRecorder.mimeType || savedMime || 'video/webm');
+          mediaRecorder.start(1000);
+        }
+
+        // 7. Update index & UI
+        currentCameraIndex = nextIndex;
+        cameraSelect.value  = currentCameraIndex;
+        updateStatus(`✅ Switched to ${nextCam.label}`, true);
+
+      } catch (err) {
+        console.error('Camera switch failed:', err);
+        updateStatus('❌ Camera switch failed: ' + err.message, true);
+      } finally {
+        switchCameraBtn.disabled = false;
+        switchCameraBtn.textContent = '🔄 Switch Camera';
+      }
     }
 
     // ─── Stop stream (also stops any active recording) ─────────────────────────
