@@ -1360,18 +1360,16 @@
     }
 
     async function switchCamera() {
-      // Show something happened immediately
       updateStatus('🔄 Switch camera requested...', isStreaming);
 
       if (cameras.length <= 1) {
-        updateStatus('⚠️ Only one camera found. Try Refresh Cameras first.', false);
+        updateStatus('⚠️ Only one camera found. Try Refresh Cameras.', false);
         return;
       }
 
       const nextIndex = (currentCameraIndex + 1) % cameras.length;
       const nextCam   = cameras[nextIndex];
 
-      // Not streaming — just update the stored index
       if (!isStreaming) {
         currentCameraIndex = nextIndex;
         cameraSelect.value = currentCameraIndex;
@@ -1379,52 +1377,56 @@
         return;
       }
 
-      // Desktop while streaming — require stop first
       if (!isMobileDevice) {
         updateStatus('⚠️ Stop stream first to switch cameras (desktop)', false);
         cameraWarning.style.display = 'block';
         return;
       }
 
-      // ── Mobile live-swap ──────────────────────────────────────────────────────
       switchCameraBtn.disabled = true;
       switchCameraBtn.textContent = '🔄 Switching...';
-      updateStatus('🔄 Opening ' + nextCam.label + '...', true);
+      updateStatus('🔄 Switching to ' + nextCam.label + '...', true);
 
       try {
-        // Step 1: open the new camera (try exact first, fallback to ideal)
+        // STEP 1: Stop the current video track FIRST so the camera hardware is released
+        updateStatus('🔄 Releasing current camera...', true);
+        const oldTracks = currentStream.getVideoTracks();
+        oldTracks.forEach(t => { t.stop(); currentStream.removeTrack(t); });
+
+        // Small pause to let the OS fully release the camera sensor
+        await new Promise(r => setTimeout(r, 300));
+
+        // STEP 2: Open the new camera
+        updateStatus('🔄 Opening ' + nextCam.label + '...', true);
         let newStream = null;
         try {
-          updateStatus('🔄 Trying exact facingMode: ' + nextCam.facingMode, true);
           newStream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: { exact: nextCam.facingMode } },
             audio: false
           });
         } catch (e1) {
-          updateStatus('🔄 Exact failed (' + e1.message + '), trying ideal...', true);
+          updateStatus('🔄 Trying ideal facingMode...', true);
           try {
             newStream = await navigator.mediaDevices.getUserMedia({
               video: { facingMode: nextCam.facingMode },
               audio: false
             });
           } catch (e2) {
-            updateStatus('🔄 ideal failed too, trying any camera...', true);
+            updateStatus('🔄 Trying any camera...', true);
             newStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
           }
         }
 
         const newVideoTrack = newStream.getVideoTracks()[0];
-        if (!newVideoTrack) throw new Error('No video track obtained from new camera');
+        if (!newVideoTrack) throw new Error('No video track from new camera');
 
-        updateStatus('🔄 Got new track: ' + newVideoTrack.label, true);
+        updateStatus('🔄 Got track: ' + newVideoTrack.label, true);
 
-        // Step 2: stop old video track(s) and swap on currentStream
-        const oldTracks = currentStream.getVideoTracks();
-        oldTracks.forEach(t => { t.stop(); currentStream.removeTrack(t); });
+        // STEP 3: Add the new track to the existing stream
         currentStream.addTrack(newVideoTrack);
 
-        // Step 3: replace on all peer connections
-        updateStatus('🔄 Replacing peer connection tracks...', true);
+        // STEP 4: Replace on all peer connections so viewers see the new camera
+        updateStatus('🔄 Updating stream for viewers...', true);
         const replacePromises = [];
         peerConnections.forEach((pc) => {
           const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
@@ -1432,12 +1434,12 @@
         });
         await Promise.all(replacePromises);
 
-        // Step 4: refresh local preview
+        // STEP 5: Refresh local preview
         video.srcObject = null;
         video.srcObject = currentStream;
         try { await video.play(); } catch(e) {}
 
-        // Step 5: if recording, restart MediaRecorder on the updated stream
+        // STEP 6: If recording, restart MediaRecorder on the updated stream
         if (isRecording && mediaRecorder && mediaRecorder.state !== 'inactive') {
           const savedMime    = mediaRecorder.mimeType;
           const savedBitrate = getBitrate(recordQualitySelect.value);
@@ -1456,7 +1458,6 @@
           mediaRecorder.start(1000);
         }
 
-        // Step 6: update state
         currentCameraIndex = nextIndex;
         cameraSelect.value  = currentCameraIndex;
         updateStatus('✅ Switched to ' + nextCam.label, true);
@@ -1464,6 +1465,26 @@
       } catch (err) {
         console.error('Camera switch failed:', err);
         updateStatus('❌ Switch failed: ' + err.message, false);
+
+        // Recovery: try to restore a working camera so the stream isn't dead
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: cameras[currentCameraIndex].facingMode },
+            audio: false
+          });
+          const fallbackTrack = fallbackStream.getVideoTracks()[0];
+          currentStream.addTrack(fallbackTrack);
+          peerConnections.forEach((pc) => {
+            const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) sender.replaceTrack(fallbackTrack);
+          });
+          video.srcObject = null;
+          video.srcObject = currentStream;
+          try { await video.play(); } catch(e) {}
+          updateStatus('⚠️ Switch failed — restored previous camera', true);
+        } catch (recoveryErr) {
+          updateStatus('❌ Stream lost. Please stop and restart.', false);
+        }
       } finally {
         switchCameraBtn.disabled = false;
         switchCameraBtn.textContent = '🔄 Switch Camera';
