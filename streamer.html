@@ -853,6 +853,38 @@
     let screenShareSupported = true;
     let isStreaming = false;
 
+    // ─── Wake Lock ─────────────────────────────────────────────────────────────
+    let wakeLock = null;
+
+    async function requestWakeLock() {
+      if (!('wakeLock' in navigator)) return; // not supported
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => {
+          // Auto-reacquire if stream is still active (e.g. tab became visible again)
+          if (isStreaming) requestWakeLock();
+        });
+        console.log('Wake lock acquired');
+      } catch (err) {
+        console.warn('Wake lock failed:', err);
+      }
+    }
+
+    async function releaseWakeLock() {
+      if (wakeLock) {
+        try { await wakeLock.release(); } catch(e) {}
+        wakeLock = null;
+        console.log('Wake lock released');
+      }
+    }
+
+    // Re-acquire wake lock when tab becomes visible again
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && isStreaming) {
+        requestWakeLock();
+      }
+    });
+
     // ─── Recording state ───────────────────────────────────────────────────────
     let mediaRecorder = null;
     let recordedChunks = [];
@@ -1497,6 +1529,7 @@
       if (isRecording) {
         stopRecording();
       }
+      releaseWakeLock();
 
       peerConnections.forEach((pc) => pc.close());
       peerConnections.clear();
@@ -1527,6 +1560,7 @@
         else stream = await startScreenShare();
         isStreaming = true;
         updateCameraWarning();
+        requestWakeLock();
         initWebSocket(stream);
         startStreamBtn.disabled = true;
         stopStreamBtn.style.display = 'block';
